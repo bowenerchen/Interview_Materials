@@ -1,0 +1,159 @@
+为什么需要链接跟踪呢？
+链接跟踪是状态防火墙和NAT实现的基础
+
+Linux会为它收到的每个数据包维持一个链接跟踪状态
+
+链接跟踪入口的hook以较高的优先级注册到netfilter的NF_INET_PREROUTING和NF_INET_OUTPUT链上
+链接跟踪出口的hook以较低的优先级注册到netfilter的NF_INET_LOCAL_IN和NF_INET_POST_ROUTING链上
+
+数据包的传递方向：
+(1).进入本地
+PREROUTING --> INPUT --> LOCAL
+ip_conntrack_defrag --> ip_conntrack_in --> ip_conntrack_help --> ip_confirm --> 本地进程
+(2).转发
+PREROUTING --> FORWARD --> POSTROUTING
+ip_conntrack_defrag --> ip_conntrack_in --> ip_conntrack_help --> ip_confirm --> 发出
+(3).本地发出
+LOCAL --> OUTPUT --> POSTROUTING
+ip_conntrack_defrag --> ip_conntrack_local --> ip_conntrack_help --> ip_confirm --> 发出
+
+==============================================================================
+
+在skb中有个nfct指针，类型是struct nf_conntrack{}，定义在linux/include/skbuff.h中，该结构体记录了链接记录被公开应用的计数
+链接跟踪在实际应用中，一般都通过强制转换将nfct转换为指向ip_conntrack{}类型的指针，来获取一个数据包所属链接跟踪的状态信息
+Netfilter框架用ip_conntrack{}来记录一个数据包与其链接状态的关系
+
+struct ip_conntrack{}定义在include/linux/netfilter_ipv4/ip_conntrack.h中，这个文件中也提供了一个接口：
+struct ip_conntrack *ip_conntrack_get(skb, ctinfo)用于获取一个skb的nfct指针，
+从而得知该数据包的连接状态以及该链接状态的相关信息ctinfo
+ctinfo表示了每个数据包的几种链接状态：
+IP_CT_ESTABLISHED    Packet是已建链接的一部分，在其初始方向
+IP_CT_RELEATED       Packet是已建链接的相关链接，在其初始方向
+IP_CT_NEW            Packet试图建立新的链接
+IP_CT_ESTABLISHED + IP_CT_IS_REPLY    Packet是已建链接的一部分，在其响应方向
+IP_CT_RELEATED + IP_CT_IS_REPLY       Packet是已建链接的相关链接，在其响应方向
+
+==============================================================================
+
+在链接跟踪内部，收到的每个数据包首先被转换成一个struct ip_conntrack_tuple{}结构，
+也就是说，struct ip_conntrack_tuple{}才是链接跟踪系统所认识的数据包
+skb与struct ip_conntrack_tuple{}之间的转换依赖于具体的协议：
+TCP/UDP: 源IP 目的IP 源端口 目的端口 序列号
+ICMP: 源IP 目的IP ICMP类型 ICMP_Code 序列号
+其他...
+
+数据包进入链接跟踪入口时，创建链接跟踪记录
+skb --> tuple --> 查找链接跟踪表 --> 调用协议的packet函数 --> 改变链接记录状态
+对于每个到来的skb，链接跟踪都将其转化为tuple结构，然后用tuple去查找链接跟踪表
+如果该类型的数据包没有被跟踪过，将为其在链接跟踪的hash表里建立一个链接跟踪记录项
+如果改类型的数据包已经被跟踪过，则不用上述操作
+然后调用该种协议的连接跟踪模块提供的packet()回调函数
+最后根据状态改变链接跟踪记录的状态
+
+数据包离开链接跟踪出口时，将链接跟踪记录加入到链接跟踪表中
+skb --> 调用协议的helper函数(可选) --> 丢弃报文或加入链接跟踪表
+对于每个即将离开netfilter的数据包，如果用于处理该协议类型的链接跟踪模块提供了helper函数，
+那么该数据包首先被helper函数处理，
+然后判断如果该数据包已经被链接跟踪过了，
+那么其所属的链接状态决定该数据包是该被丢弃还是返回协议栈中继续传输，或者将其加入链接跟踪表中
+
+==============================================================================
+
+对于操作系统来说，连接跟踪具有如下的功能模块：
+
+(1).链接跟踪协议管理
+不同协议，其链接跟踪的实现是不同的，每种协议处理自己的链接跟踪，
+首先必须实例化一个ip_conntrack_protocol{}结构体对象，对其进行必要的填充，
+然后调用ip_conntrack_protocol_register()函数将该结构体进行注册，其实就是根据协议类型，将结构体实例注册到全局数组ip_ct_protos[]中，
+struct ip_conntrack_protocol ip_ct_protos[]数组中保存链接跟踪系统当前可以处理的所有协议，
+使用协议号作为数组的唯一下标;
+
+(2).链接跟踪辅助模块 help
+help模块可以用比较小的代价完成对链接跟踪功能的拓展，如需要对即将离开netfilter的数据包进行修改
+help模块以比较低的优先级注册在LOCAL_OUT和POST_ROUTING两个hook点上
+使用help模块需要实例化一个struct ip_conntrack_helper{}结构体实例，
+然后使用ip_conntrack_helper_register()函数将其注册到helpers全局变量中，
+helpers是一个全局的双向链表，里面保存了当前已经注册到链接跟踪系统中的所有协议的辅助模块；
+全局helpers变量的定义和初始化在net/netfilter/nf_conntrack_helper.c文件中完成的
+注册在Netfilter框架里LOCAL_OUT和POST_ROUTING两个hook点上ip_conntrack_help()回调函数所做的事情:
+通过依次遍历helpers链表，然后调用每个ip_conntrack_helper{}对象的help()函数
+
+
+(3).期望链接：
+Netfilter的连接跟踪为类似于FTP的应用提供了链接跟踪机制
+FTP协议使用21端口做命令传输通道，主动模式下用20端口做数据传输通道，被动模式下服务器随机开一个高于1024的端口，等待客户端连接并进行数据传输
+无论FTP是在主动模式还是在被动模式，都需要两条连接：命令通道和数据通道
+期望链接的概念为：一条链接和另一条链接是相关联的
+每条期望链接都用一个struct ip_conntrack_expect{}结构体来表示，所有的期望链接存储在由全局变量ip_conntrack_expect_list的双向链表中
+
+(4).链接跟踪表
+链接跟踪表是一个用于记录所有链接跟踪信息的hash表，是一个以数据包的hash值组成的一个双向循环链表数组，每条链表中的每个节点都是
+struct ip_conntrack_tuple_hash{}的一个实例，链接跟踪表由一个全局的双向链表指针变量ip_conntrack_hash[]来表示;
+
+==============================================================================
+链接跟踪协议管理相关的数据结构：
+ip_conntrack_protocol{}结构体实例 注册到全局数组ip_ct_protos[]中；
+
+链接跟踪辅助模块help相关的数据结构：
+struct ip_conntrack_helper{}结构体实例 注册到全局双向链表helpers中
+
+链接跟踪期望链接相关的数据结构：
+struct ip_conntrack_expect{}结构体实力 存储到全局变量ip_conntrack_expect_list的双向链表中
+
+链接跟踪表相关的数据结构：
+链接跟踪表是一个用于记录所有链接跟踪信息的双向循环链表数组hash表，
+每个节点都是struct ip_conntrack_tuple_hash{}的一个实例，
+链接跟踪表由一个全局的双向链表指针变量ip_conntrack_hash[]来表示。
+
+对每个数据包skb，Netfilter使用ip_conntrack{}来记录一个数据包与其链接状态的关系。
+
+在链接跟踪内部，收到的每个数据包首先被转换成一个struct ip_conntrack_tuple{}结构。
+==============================================================================
+连接跟踪机制在Netfilter框架里所注册的hook函数一共就五个：
+ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()、ip_conntrack_help()和ip_confirm()。
+
+在链接跟踪的入口处主要有三个函数在工作：ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()；
+在链接跟踪的出口处就两个：ip_conntrack_help()和ip_confirm()。
+
+连接跟踪虽然不会改变数据包本身，但是它可能会将数据包丢弃。
+
+对于需要转发的数据包：
+ip_conntrack_defrag --> ip_conntrack_in --> ip_conntrack_help --> ip_confirm --> 外出
+
+ip_conntrack_defrag():
+链接跟踪只跟踪完整的IP报文，不对IP分片进行跟踪，所有的IP分片都必须被还原成原始报文，才能进入连接跟踪系统
+
+==============================================================================
+
+ip_conntrack_in()：
+(1).ip_conntrack_in()函数首先根据数据包skb的协议号，在全局数组ip_ct_protos[]中查找某种协议(如TCP，UDP或ICMP等)所注册的连接跟踪处理模块ip_conntrack_protocol{}
+(2).找到对应的协议的处理单元proto后，便调用该协议提供的错误校验函数(如果该协议提供的话)error来对skb进行合法性校验
+(3).调用resolve_normal_ct()函数，其根据skb中相关信息，调用协议提供的pkt_to_tuple()函数生成一个ip_conntrack_tuple{}结构体对象tuple；然后用该tuple去查找连接跟踪表，看它是否属于某个tuple_hash{}链；一条连接跟踪由两条ip_conntrack_tuple_hash{}链构成，一"去"一"回"；
+
+查找结果有以下可能：
+如果找到了该tuple所属于的tuple_hash链表，则返回该链表的地址；
+
+如果没找到，表明该类型的数据包没有被跟踪，那么我们首先必须建立一个ip_conntrack{}结构的实例，即创建一个连接记录项。
+
+然后，计算tuple的应答repl_tuple，对这个ip_conntrack{}对象做一番必要的初始化后，其中还包括，将我们计算出来的tuple和其反向tuple的地址赋给连接跟踪ip_conntrack里的tuplehash[IP_CT_DIR_ORIGINAL]和tuplehash[IP_CT_DIR_REPLY]。
+
+最后，把ip_conntrack->tuplehash[IP_CT_DIR_ORIGINAL]的地址返回。这恰恰是一条连接跟踪记录初始方向链表的地址。Netfilter中有一条链表unconfirmed，里面保存了所有目前还没有收到过确认报文的连接跟踪记录，然后我们的ip_conntrack->tuplehash[IP_CT_DIR_ORIGINAL]就会被添加到unconfirmed链表中。
+
+(4).调用协议所提供的packet()函数，该函数承担着最后向Netfilter框架返回值的使命，如果数据包不是连接中有效的部分，返回-1，否则返回NF_ACCEPT。
+
+ip_conntrack_help()
+首先，判断数据包是否拿到“绿卡”，即连接跟踪是否为该类型协议的包生成了连接跟踪记录项ip_conntrack{}；
+
+其次，该数据包所属的连接状态不属于一个已建连接的相关连接，在其响应方向。
+
+两个条件都成立，就用该helper模块提供的help()函数去处理我们这个数据包skb。最后，这个help()函数也必须向Netfilter框架返回NF_ACCEPT或NF_DROP等值。任意一个条件不成立则ip_conntrack_help()函数直接返回NF_ACCEPT，我们这个数据包继续传输。
+
+ip_confirm()
+如果数据包已经拿到了“绿卡”ip_conntrack{}，
+并且我们这个数据包所属的连接还没收到过确认报文，
+并且该连接还未失效，
+然后，我们这个ip_confirm()函数要做的事就是：
+拿到连接跟踪为该数据包生成ip_conntrack{}对象，根据连接“来”、“去”方向tuple计算其hash值，然后在连接跟踪表ip_conntrack_hash[]见上图中查找是否已存在该tuple；
+如果已存在，该函数最后返回NF_DROP；
+如果不存在，则将该连接“来”、“去”方向tuple插入到连接跟踪表ip_conntrack_hash[]里，并向Netfilter框架返回NF_ACCEPT。
+之所以要再最后才将连接跟踪记录加入连接跟踪表是考虑到数据包可能被过滤掉。

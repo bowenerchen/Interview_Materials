@@ -1,0 +1,48 @@
+DHCP（Dynamic Host Configuration Protocol，动态主机配置协议）使用UDP协议工作，采用67（DHCP服务器文）和68（DHCP客户端）两个端口号。
+546号端口用于DHCPv6 Client，而不用于DHCPv4，是为DHCP failover服务。
+
+否定应答（称为NAK；或称为NACK；或称为Negative-Acknowledgment）翻译为否定应答或者非应答。
+这种协议消息在数字通信中被使用，其作用是作为一种确认数据收到的应答，但表明有小错误存在的一种消息信号。
+
+DHCP一共有8种报文，分别为DHCP Discover、DHCP Offer、DHCP Request、DHCP ACK、DHCP NAK、DHCP Release、DHCP Decline、DHCP Inform。
+
+DHCP报文交互过程：
+
+1.发现阶段，即DHCP客户机寻找DHCP服务器的阶段（DHCPdiscover）
+    DHCP客户机以广播方式（因为DHCP服务器的IP地址对于客户机来说是未知的）发送DHCPdiscover发现信息来寻
+找DHCP服务器，即向地址255.255.255.255发送特定的广播信息。网络上每一台安装了TCP/IP协议的主机都会接收到
+这种广播信息，但只有DHCP服务器才会做出响应。
+    使用0.0.0.0的地址作为源地址，使用UDP68端口作为源端口，使用255.255.255.255作为目标地址，使用UDP67端口作为目的端口来广播请求IP地址信息。
+    广播信息中包含了DHCP客户机的MAC地址和计算机名，以便使DHCP服务器能确定是哪个客户机发送的请求。
+
+2.提供阶段，即DHCP服务器提供IP地址的阶段（DHCPoffer）
+    在网络中接收到DHCPdiscover发现信息的DHCP服务器都会做出响应，它从尚未出租的IP地址中挑选一个分配给
+DHCP客户机，向DHCP客户机发送一个包含出租的IP地址和其他设置的DHCPoffer提供信息。
+
+3.选择阶段，即DHCP客户机选择某台DHCP服务器提供的IP地址的阶段（DHCPrequest）
+    如果有多台DHCP服务器向DHCP客户机发来的DHCPoffer提供信息，则DHCP客户机只接受第一个收到的DHCPoffer
+提供信息，然后它就以广播方式回答一个DHCPrequest请求信息，该信息中包含向它所选定的DHCP服务器请求IP地址
+的内容。之所以要以广播方式回答，是为了通知所有的DHCP服务器，他将选择某台DHCP服务器所提供的IP地址。
+
+4.确认阶段，即DHCP服务器确认所提供的IP地址的阶段（DHCPack）
+    当DHCP服务器收到DHCP客户机回答的DHCPrequest请求信息之后，它便向DHCP客户机发送一个包含它所提供的IP
+地址和其他设置的DHCPack确认信息，告诉DHCP客户机可以使用它所提供的IP地址。然后DHCP客户机便将其TCP/IP协
+议与网卡绑定，另外，除DHCP客户机选中的服务器外，其他的DHCP服务器都将收回曾提供的IP地址。
+
+5.重新登录（DHCPrequest）
+    以后DHCP客户机每次重新登录网络时，就不需要再发送DHCPdiscover发现信息了，而是直接发送包含前一次所
+分配的IP地址的DHCPrequest请求信息。当DHCP服务器收到这一信息后，它会尝试让DHCP客户机继续使用原来的IP
+地址，并回答一个DHCPack确认信息。如果此IP地址已无法再分配给原来的DHCP客户机使用时（比如此IP地址已分
+配给其它DHCP客户机使用），则DHCP服务器给DHCP客户机回答一个DHCPnack否认信息。当原来的DHCP客户机收到此
+DHCPnack否认信息后，它就必须重新发送DHCPdiscover发现信息来请求新的IP地址。
+
+6.更新租约
+    DHCP服务器向DHCP客户机出租的IP地址一般都有一个租借期限，期满后DHCP服务器便会收回出租的IP地址。如
+果DHCP客户机要延长其IP租约，则必须更新其IP租约。DHCP客户机启动时和IP租约期限过一半时，DHCP客户机都会
+自动向DHCP服务器发送更新其IP租约的信息。
+
+7.获取配置参数（DHCPINFORM）
+   如果客户通过别的手段获得了网络地址，它可以使用DHCPINFORM请求获得其它配置参数，服务器接收
+到DHCPINFORM包，并建立一个DHCPACK消息，在其中包括一些合适客户的配置参数，只是不包括分配网络
+地址，检查现有的绑定，在信息中不填充'yiaddr'字段或租用时间参数。服务器取得DHCPINFORM包内的
+'ciaddr'地址，而返回DHCPACK包。

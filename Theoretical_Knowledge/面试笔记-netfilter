@@ -1,0 +1,185 @@
+NETFILTER框架：
+五条链：
+NF_INET_PRE_ROUTING — PRE_ROUTING链
+NF_INET_LOCAL_IN — INPUT链
+NF_INET_FORWARD — FORWARD链 
+NF_INET_LOCAL_OUT — OUTPUT链
+NF_INET_POST_ROUTING — POST_ROUTING链
+从PRE_ROUTING链进来之后，需要做路由决策，以判断是需要进INPUT链还是FORWARD链
+
+NETFILTER的返回值：
+NF_ACCEPT：数据包可以被递送到网络堆栈的下一个模块
+NF_DROP：数据包直接被丢弃，不再传输
+NF_STOLEN：由hook函数接管数据包，不再由netfilter处理，一般涉及到改包，如镜像数据包时将源目的Mac对调然后直接发送出去
+NF_QUEUE：数据包将被插入到用户空间的队列中如NFQ接口
+NF_REPEAT：数据包由前一个模块继续处理
+NF_STOP：完全接收该数据包，且后面的模块不再处理该数据包
+
+NETFILTER维护的4张表：
+raw表 > mangle表 > nat表 > filter表(默认)
+
+PREROUTING链：raw表 mangle表 nat表
+FORWARD链：mangle表 filter表
+POSTROUTING链：mangle表 nat表
+INPUT链：mangle表 filter表
+OUTPUT链：raw表 mangle表 nat表 filter表
+
+==============================================================================
+二维数组nf_hooks[pf][hook]，pf对应协议簇，hook对应hook点(也就是5条链)
+nf_hooks[PF_INET][NF_IP_PREROUTING]表示IPv4协议簇下的PREROUTING链
+
+nf_hooks是一个类型为struct nf_hooks_ops的二维数组：
+struct nf_hook_ops
+{
+        struct list_head list;                        //链表成员
+
+        /* User fills in from here down. */
+        nf_hookfn *hook;                        //链子函数指针
+        struct module *owner;
+        int pf;                                        //协议簇，对于ipv4而言，是PF_INET
+        int hooknum;                                //hook类型
+        /* Hooks are ordered in ascending priority. */
+        int priority;                                //优先级
+};
+成员list用于链入全局勾子数组nf_hooks中，它一定在第一位，保证&nf_hook_ops->list的值与&nf_hook_ops相同。
+
+struct nf_hook_ops只是存储勾子的数据结构，而真正存储这些勾子供协议栈调用的是nf_hooks，从定义可以看出，它其实就是二维数组的链表。
+struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS]; [net\filter\core.c]
+NFPROTO_NUMPROTO表示勾子关联的协议，可取值：
+enum {  
+    NFPROTO_UNSPEC =  0,  
+    NFPROTO_IPV4   =  2,  
+    NFPROTO_ARP    =  3,  
+    NFPROTO_BRIDGE =  7,  
+    NFPROTO_IPV6   = 10,  
+    NFPROTO_DECNET = 12,  
+    NFPROTO_NUMPROTO,  
+};
+
+==============================================================================
+注册一个HOOK：
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/netfilter.h>
+#include <linux/netfilter_ipv4.h>
+
+MODULE_LICENSE("Dual BSD/GPL");
+
+static struct nf_hook_ops nfho;
+
+//钩子函数，注意参数格式与开发环境源码树保持一致
+unsigned int hook_func(const struct nf_hook_ops *ops, 
+        struct sk_buff *skb,
+        const struct net_device *in,
+        const struct net_device *out,
+        int (*okfn)(struct sk_buff *))
+{
+    return NF_DROP;//丢弃所有的数据包
+}
+
+static int __init hook_init(void)
+{
+    nfho.hook = hook_func;//关联对应处理函数
+    nfho.hooknum = NF_INET_PRE_ROUTING;//2.6.22及以后的内核中，内核态编程需要使用这个
+    nfho.pf = PF_INET;//ipv4，所以用这个
+    nfho.priority = NF_IP_PRI_FIRST;//优先级，第一顺位，首先执行我们定义的函数
+
+    nf_register_hook(&nfho);//注册
+
+    return 0;
+}
+static void __exit hook_exit(void)
+{
+    nf_unregister_hook(&nfho);//注销
+}
+
+module_init(hook_init);
+module_exit(hook_exit);
+
+nf_hooks结构图：
+NFPROTO_IPV4  NF_INET_LOCAL_IN <-->nf_hook_ops<-->nf_hook_ops...
+
+=====================================================================================
+其实PRE_ROUTING和LOCAL_OUT点可以看作是整个netfilter的入口，而POST_ROUTING和LOCAL_IN可以看作是其出口:
+PRE_ROUTING --> LOCAL_IN
+PRE_ROUTING --> FORWARD --> POST_ROUTING
+LOCAL_OUT   --> POSTROUTING
+
+==============================================================================
+mangle表：
+1）CONNMARK target的选项
+选项 功能
+–set-mark value[/mask] 给链接跟踪记录打标记。
+–save-mark [–mask mask] 将数据包上的标记值记录到链接跟踪记录上。
+–restore-mark [–mask mask] 重新设置数据包的nfmark值。
+
+2）MARK target 的选项
+选项 功能
+–set-mark value 设置数据包的nfmark值。
+–and-mark value 数据包的nfmark值和value进行按位与运算。
+–or-mark value 数据包的nfmark值和value进行按或与运算。
+
+应用到策略路由：
+打mark：
+iptables -t mangle -A PREROUTING -i eth0 -p tcp --dport 80 -j MARK --set-mark 1 
+iptables -t mangle -A PREROUTING -i eth0 -p udp --dprot 53 -j MARK --set-mark 2
+建表：
+ip rule add from all fwmark 1 table 10 
+ip rule add from all fwmark 2 table 20
+策略路由：
+ip route add default via 10.10.1.1 dev eth1 table 10 
+ip route add default via 10.10.2.1 dev eth2 table 20
+
+3）MARK match的选项
+选项 功能
+[!] –mark value[/mask] 数据包的nfmark值与value进行匹配，其中mask的值为可选的
+
+CONNMARK与MARK结合使用：
+//第1条规则就是完成了将链接跟踪上的标记记录到该连接上的每一个数据包中
+iptables -A POSTROUTING -t mangle -j CONNMARK --restore-mark
+
+//第2条规则判断数据包的标记，如果不为0，则直接ACCEPT。如果数据包上没有被打标记，则交由后面的规则进行匹配并打标记。这里
+//为什么会出现经过了CONNMARK模块，数据包仍未被打标记呢？可以想到，如果一条链接的第1个数据包经过第1条规则处理之后，由于
+//ct->mark为0，所以其数据包的标记skb->nfmark应该仍旧为0，就需要进行后面规则的匹配。
+iptables -A POSTROUTING -t mangle -m mark ! --mark 0 -j ACCEPT
+
+//第3~5条规则，则按照匹配选项对符合规则的数据包打上不同的标记
+iptables -A POSTROUTING -m mark --mark 0 -p tcp --dport 21 -t mangle -j MARK --set-mark 1
+iptables -A POSTROUTING -m mark --mark 0 -p tcp --dport 80 -t mangle -j MARK --set-mark 2
+iptables -A POSTROUTING -m mark --mark 0 -t mangle -p tcp -j MARK --set-mark 3 
+
+//第6条规则，则是把之前打的标记信息保存到ct里.
+iptables -A POSTROUTING -t mangle -j CONNMARK --save-mark
+
+==============================================================================
+
+柔性数组既数组大小待定的数组， C语言中结构体的最后一个元素可以是大小未知的数组，也就是所谓的0长度，所以我们可以用结构体来创建柔性数组。
+它的主要用途是为了满足需要变长度的结构体，为了解决使用数组时内存的冗余和数组的越界问题。
+在一个结构体的最后 ，申明一个长度为空的数组，就可以使得这个结构体是可变长的。对于编译器来说，此时长度为0的数组并不占用空间，因为数组名本身不占空间，它只是一个偏移量， 数组名这个符号本身代 表了一个不可修改的地址常量 （注意：数组名永远都不会是指针！ ），但对于这个数组的大小，我们可以进行动态分配,对于编译器而言，数组名仅仅是一个符号，它不会占用任何空间，它在结构体中，只是代表了一个偏移量，代表一个不可修改的地址常量！
+typedef struct _SoftArray{
+int len;
+int array[];
+}SoftArray;
+int main()
+{
+    int len=10,i=0;
+    
+    SoftArray *p=(SoftArray*)malloc(sizeof(SoftArray)+sizeof(int)*len);
+    p->len=len;
+    
+    for(i=0;i<p->len;i++)
+   {
+        p->array[i]=i+1;
+    }
+    for(i=0;i<p->len;i++)
+   {  
+        printf("%d\n",p->array[i]);
+    }
+
+    free(p);
+
+    return 0;
+}
+结构体中使用柔性数组，可以一次性将所需的内存空间申请出来(所以内存是连续的，内存碎片也减少了)，因为如果是以指针形式声明的，那么就必须做两次内存申请(结构体一次，成员s一次)
+
+

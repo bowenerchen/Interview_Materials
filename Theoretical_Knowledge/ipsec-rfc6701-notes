@@ -1,0 +1,242 @@
+IPSec RFC 6071 Notes
+
+IPSec：Internet Protocol Security
+IPSec可应用的场景：
+网关--网关
+主机--网关
+主机--主机
+
+====================================================================
+The Internet IP Security Domain of Interpretation for ISAKMP 
+ISAKMP的Internet IP安全解释域(DOI) RFC2407
+
+ISAKMP：Internet Security Association and Key Management Protocol 安全联盟和密钥管理协议 RFC2408
+
+IKE：Internet Key Exchange 互联网密钥交换协议 RFC2409
+(用于密钥协商和管理，为IPSec提供动态协商和更新密钥材料)
+
+The OAKLEY Key Determination Protocol OAKLEY密钥确定协议 RFC2412
+
+AH：Authentication Header 认证首部 RFC4302
+
+ESP：Encapsulating Security Payload 封装安全净荷 RFC4303
+
+IPSec位于传输层之下，对于应用程序和终端用户来说是透明的。
+IPSec是有IETF定义的一种协议套件，由一系列的协议组成：
+验证头AH
+封装安全载荷ESP
+安全联盟和密钥管理协议ISAKMP
+Internet IP安全解释域(DOI)
+互联网密钥交换协议IKE
+OAKLEY密钥确定协议
+
+====================================================================
+AH&ESP：定义了载荷头格式以及其能提供的服务，定义了数据报的处理规则；两个协议在处理数据报文时，都需要根据确定的数据变换算法来对数据报进行转换，以确保数据的安全，其中包括算法，密钥大小，算法程序以及算法专用的任何信息。
+
+IKE：IKE利用ISAKMP语言来进行密钥交换，是一种安全服务协商的手段。IKE交换最终的结果是一个被验证的密钥，以及建立在通信双方同意的基础上的安全服务--IPSec安全联盟。IKE协议用于协商AH和ESP所使用的密码算法，并将算法所需要的密钥放在合适的地方。
+
+SA：安全关联，一套专门将安全服务/密钥，和需要保护的通信数据关联起来的方案。他保证IPSec数据报封装及提取的正确性，同时将远程通信实体和要求交换密钥的IPSec数据传输关联起来，总结起来就是，SA解决了如何保护数据，保护什么样的数据，以及由谁来实施保护的问题。
+单个SA保护单一方向的数据，此保护针对单个主机或一组（多播）地址。由于多数通信为对等通信或客户机/服务器通信，因此，必须存在两个 SA 来保证两个方向的通信安全。
+以下三个元素唯一地标识 IPsec SA：
+1.安全协议（AH 或 ESP）
+2.目标 IP 地址
+3.security parameter index, SPI（安全参数索引）
+SPI是任意32位的值，与AH或ESP包一起传输。
+
+安全关联SA存储在安全关联数据库 (security associations database, SADB) 中。
+基于套接字的管理接口 PF_KEY 使特权应用程序可以管理数据库。例如，IKE 应用程序和 ipseckeys 命令会使用 PF_KEY 套接字接口。
+
+为了抵抗重播攻击，IPSec数据包使用了一个序列号，以及一个滑动的接收窗口。在每个IPSec头内，都包含了一个独一无二、且单调递增的序列号。创建好一个SA后，序列号便会初始化为零，并在进行IPSec输出处理前，令这个值递增。新的SA必须在序列号回归为零之前创建，由于序列号的长度为32位，所以必须在232次方个数据包之前。
+====================================================================
+IPSec的模式：
+传输模式：
+传输模式保护的是IP包的有效载荷(上层协议UDP/TCP/ICMP)，在传输模式下，IP报头和载荷之间需要插入一个IPSec头；通常模式下，IPSec传输模式只适用于两台主机之间的安全通信。
+【IP头】【IPSec头】【TCP头】【数据】
+
+隧道模式：
+隧道模式为整个IP包提供保护，要保护的整个IP包都需要封装到另一个IP数据报文中，同时在新IP头与旧IP头之间插入一个IPSec头
+【新IP头】【IPSec头】【IP头】【TCP头】【数据】
+
+====================================================================
+IPSec数据流的处理：
+
+发送数据前的外出处理：
+数据报从传输层进入IP层后，IP层首先取出IP头的有关参数，检索SPDB数据库，判断此数据包需要的安全服务：
+  输入           检索       输出
+源IP与目的IP --> SPDB --> 安全策略
+
+策略结果：
+1.丢弃数据报
+2.绕过安全服务：此数据报按照正常的数据报进行发送
+3.实施安全服务：需要做安全处理
+如果返回的策略是对数据报实施安全处理，那么接下来需要在SADB中查询与该连接相关的SA是否已经建立：
+如果SA已经建立，那么检索SADB需要返回指向此SA的指针
+如果查询不到SA，那么说明该数据报所属的安全通信尚未建立，需要调用IKE进行协商，将所需要的SA建立起来。
+在SA建立之前，是不允许将数据报发送出去的。
+
+对于获取的SA，还需要进行一些判断：
+1.如果SA的软生存期已满，就调用IKE建立一个新的SA
+2.如果SA的硬生存期已满，就将这个SA删除
+3.如果序列号溢出，就调用IKE来协商一个新的SA
+SA判断完成后，下一步则对数据报添加AH或ESP报头，其中涉及到对数据包的加密，计算校验等。
+在完成IPSec的报头构建后，将生成的数据报传送到IP层进行处理，然后进行数据报的发送。
+
+
+接受数据报的进入处理：
+在收到IP报文后：
+1.IP报文内如果没有IPSec报头，那么IPSec首先会校验SPDB数据库，并根据为之提供的安全服务类型进行判断该如何对这个包进行处理：
+如果特定的通信要求IPSec安全保护，那么任何不能与IPSec保护的那个通信的SPDB相匹配的进入包就应该被丢弃。
+2.如果IP报文中，包含了IPSec报头，那么就会由IPSec层首先岁这个包进行处理，IPSec首先会提取出SPI，源地址，目的地址，组织成<SPI，目的地址，协议>三元组对SADB数据库进行检索，协议之要么是AH，要么是ESP，根据这个值，报文要么被AH协议处理，要么被ESP协议处理；在被处理前，需要先对重放攻击和SA生存期进行检查，对于重放包或已经过了SA生存期的包简单丢弃而不作任何处理。
+协议载荷处理完成后，需要查询SPDB对载荷进行校验，选择符用来作为获取策略的依据：
+检查SA中的源和目的地址是否与策略相对应，以及SA保护的传输层协议是否和要求相符合。
+
+====================================================================
+IPSec VPN隧道的协商建立过程分为两个阶段：
+第一个阶段分为两种模式：主模式和野蛮模式
+第二个阶段为快速模式
+
+主模式与野蛮模式的区别：
+1.野蛮模式比主模式协商更快，主模式协商需要6个数据包，而野蛮模式只需要3个数据包。
+2.主模式比野蛮模式更安全。主模式在第5,6个包中对ID信息进行了加密，而野蛮模式由于受到数据报交换次数的限制，ID消息在第1,2个数据包中以明文的方式发送给了对端，即主模式对对端身份进行了保护，而野蛮模式则没有。
+
+第一阶段作用-----对等体之间彼此验证对方,并协商出IKE SA,保护第二阶段中IPSEC SA协商过程
+第二阶段作用-----协商IPSEC 单向SA,为保护IPS数据流而创建
+
+第一阶段主模式IKE协商(预共享密钥)：
+ISAKMP消息的格式来传递信息(UDP 500)
+在真正发送消息之前，发送者和接收者必须先计算出各自的cookie，这些cookie用来标识每个单独的协商交换信息，同时也可以防重放。
+
+第1,2个数据包
+消息1--发送方向对等体发送一条包含一组或多组策略的提议，在策略提议中包含5元组：
+加密算法，散列算法，DH，认证方法，IKE-SA寿命
+消息2,--接收方查看IKE策略消息，并尝试在本地寻找匹配的策略，找到后，则有一条消息去回应
+
+====================================================================
+
+IKE是一个混合协议，由三个协议组成：
+SKEME 决定了IKE的密钥交换方式，IKE主要使用DH来实现密钥交换
+Oakley决定了IPSec的框架设计，让IPSec能够支持更多的协议
+ISAKMP是IKE的本质协议，它决定了IKE协商包的封装格式，交换过程和模式切换
+
+为建立IPSec SA而进行的IKE协商工作由ISAKMP报文来完成：
+IP Header | UDP Header | ISAKMP Header | Payload
+ISAKMP报文头：
+Initiator’s Cookie (SPI)
+Responder’s Cookie (SPI) 在IKEv1版本中为Cookie，在IKEv2版本中Cookie为IKE的SPI，唯一标识一个IKE SA
+
+第1，2个数据包
+协商IKE安全提议的过程中，响应方会在自己配置的IKE安全提议中寻找与发送方相匹配的IKE安全提议，如果没有匹配上则协商失败；IKE Peer双方安全提议的匹配的原则为协商双方有相同的加密算法，认证算法，身份认证方法，DH组参数；通过IKEv1协议协商建立IPSec安全联盟时，采用本地生存周期核对端生存周期中较小的一个，不必保证两端设备的生存周期(SA Duration)必须相同。
+
+第3，4个数据包
+两端设备使用ISAKMP消息的Key Exchange和nonce载荷交换彼此的密钥参数；Key Exchange用于交换DH公开值，nonce用于传送临时随机数；DH算法中，IKE Peer双方只交换密钥参数，并不交换真正的共享密钥。
+Nonce是或Number once的缩写，在密码学中Nonce是一个只被使用一次的任意或非重复的随机数值。
+在加密技术中的初始向量和加密散列函数都发挥着重要作用，在各类验证协议的通信应用中确保验证信息不被重复使用以对抗重放攻击(Replay Attack)。
+两端通过交换的DH参数计算出各自的公钥和私钥后，私钥被保留在本地，公钥被发送给对方；
+然后在通过对方的公钥，自己的公钥私钥以及自身配置的身份验证方法，生成三个密钥：
+SKEYID_a: ISAKMP消息完整性验证密钥 — 保证ISAKMP消息的完整性；
+SKEYID_e: ISAKMP消息的加密密钥 — 保证ISAKMP消息的绝密性；
+SKEYID_d: 用于衍生出IPSec报文加密和验证密钥 — 这个密钥用来保证IPSec业务数据流的安全性；
+整个的密钥交换和计算过程在IKE SA超时时间的控制下以一定周期自动刷新，避免密钥长期不变带来的隐患。
+
+第5，6个数据包
+IKE Peer通过两条ISAKMP(第5,6个数据包)消息交换身份信息，进行身份认证，目前有两种身份认证技术比较常用：
+预共享密钥：设备的身份信息为IP地址或名称；
+数字证书方式：设备的身份信息为证书和通过证书私钥加密的部分消息Hash值（俗称签名）；
+无论哪种方式，身份信息都是由SKEYID_e进行加密的，在抓包的过程中只能看到密文；
+在进行身份验证的时候，两端都需要用SKEYID_a来验证ISAKMP的完整性并用SKEYID_e来进行解密，但是只有先找到正确的预共享密钥，才能计算出这两个密钥，IKE根据IKE Peer发来的ISAKMP报文的源IP地址来查找预共享密钥。
+
+完成了第一阶段IKE SA的创建后，进入第二阶段IPSec SA的建立
+在第二阶段，IKEv1采用快速模式通过3条ISAKMP消息建立IPSec SA，由于快速交换模式使用IKEv1阶段1中的SKEYID_e对ISAKMP消息进行加密，因此抓包抓到的报文都是密文。
+
+发送方发送一条报文，其中包含HASH，IPSEC策略提议，NONCE和可选的DH，身份ID；
+其中：
+HASH用于给接受方作完整性检查，用于再次验证对端peer；
+IPSEC策略提议包括：安全协议，SPI，散列算法，隧道模式，IPSEC SA生命周期；
+NONCE用于防止重放攻击，同是时被用作密码生成材料，仅当启用PFS时用到；
+身份ID用于描述IPSEC SA是哪些地址，协议，端口组建
+PFS利用DH交换参数，在第二阶段重新DH出一个数据加密的密钥，这个KEY和第一阶段协商出来的KEY没有关系，后面由这个KEY来加密数据报，直到IPSEC SA的生命周期结束后，在此DH出新的KEY；
+DH参数是重新协商IPSEC SA时使用的密钥(正常情况下，IPSEC 阶段使用的密钥都是由SKEYID_d衍生出来)。
+
+响应方回应同样的报文消息。
+
+发送方发送第三条消息，其中包含一个HASH，其作用是确认接受方的消息，以及证明发送方处于Active状态。
+
+====================================================================
+
+sm1 -- aes 算法不公开 非对称加密算法
+sm2 -- rsa 基于ECC，密码长度256位 非对称加密算法
+sm3 -- md5 以256bit作为分组，输出长度128位
+sm4 -- des 密钥长度与分组长度为128位，对称加密算法
+
+====================================================================
+ISAKMP字段：
+Initiator SPI
+Responder SPI
+Next payload: Security Association(1)
+Version: 1.0
+Exchange type: Identity Protection(Main Mode) (2)
+Flags: 0x00
+Message ID: 0x00000000
+Length: 792
+Payload: Security Association(1)
+    Next payload: Vendor ID (13)
+    Reserved: 00
+    Payload length: 644
+    Domain of interpretation: IPSEC(1)
+    Situation: 00000001
+    Payload: Proposal(2) #0
+        Next payload: NONE / No Next Payload
+	Reserved: 00
+	Payload length: 632
+	Proposal number: 0
+	Protocol ID: ISAKMP
+	SPI Size: 0
+	Proposal transforms: 18
+	Payload: Transform(3) #0
+	    Next payload: Transform(3)
+            Reserved: 00
+            Payload length: 36
+            Transform number: 0
+            Transform ID: KEY_IKE(1)
+            Reserved: 0000
+            IKE Attribute(t=11,l=2):Life-Type:Seconds
+            IKE Attribute(t=12,l=2):Life-Duration:3600
+            IKE Attribute(t=1,l=2):Encryption-Algorithm:AES-CBC
+            IKE Attribute(t=2,l=2):Hash-Algorithm:SHA
+            IKE Attribute(t=3,l=2):Authentication-Method:Pre-shared key
+            IKE Attribute(t=4,l=2):Group-Description:2048 bit MODP group
+            IKE Attribute(t=14,l=2):Key-Length:256
+        ……..
+
+整个报文包含的部分：
+Initiator SPI
+Responder SPI
+Version: 1.0
+Exchange type: Identity Protection(Main Mode) (2)
+Flags: 0x00
+Message ID: 0x00000000
+Length: 792
+SA
+Vendor ID(13)
+
+SA里面包含的部分：
+Reserved:00
+Payload length:644
+Domain of interpretation:IPSEC(1)
+Situation: 00000001
+Payload:Proposal(2) #0
+
+Proposal包含：
+Reserved:00
+Payload length:632
+Proposal number:0
+Protocol ID:ISAKMP
+SPI Size:0
+Proposal transforms:18
+
+
+在使用PFS之前，PFS使得IPSEC第二阶段的密钥是从第一阶段的密钥导出的，使用PFS，使IPSEC的两个阶段的密钥是独立的。所以采用PFS来提高安全性。
+
+要求一个密钥只能访问由它所保护的数据；用来产生密钥的元素一次一换，不能再产生其他的密钥；一个密钥被破解，并不影响其他密钥的安全性；PFS 特性是由DH算法保障的。
+
+
