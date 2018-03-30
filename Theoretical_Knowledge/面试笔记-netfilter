@@ -88,6 +88,7 @@ static int __init hook_init(void)
 
     return 0;
 }
+
 static void __exit hook_exit(void)
 {
     nf_unregister_hook(&nfho);//注销
@@ -172,7 +173,7 @@ int main()
         p->array[i]=i+1;
     }
     for(i=0;i<p->len;i++)
-   {  
+   {
         printf("%d\n",p->array[i]);
     }
 
@@ -181,5 +182,3 @@ int main()
     return 0;
 }
 结构体中使用柔性数组，可以一次性将所需的内存空间申请出来(所以内存是连续的，内存碎片也减少了)，因为如果是以指针形式声明的，那么就必须做两次内存申请(结构体一次，成员s一次)
-
-
