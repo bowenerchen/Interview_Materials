@@ -11,7 +11,7 @@ Ring数据结构提供了一个无锁的多生产者，多消费者的FIFO表处
 2.4. 定时器管理(librte_timer)
 这个库位DPDK执行单元提供了定时服务，为函数异步执行提供支持。 定时器可以设置周期调用或只调用一次。 使用EAL提供的接口获取高精度时钟，并且能在每个核上根据需要初始化。 具体参考 Timer Library。
 
-3、 以太网轮询驱动架构
+3、以太网轮询驱动架构
 DPDK的PMD驱动支持1G、10G、40G。 同时DPDK提供了虚拟的以太网控制器，被设计成非异步，基于中断的模式。 详细内容参考 Poll Mode Driver。
 
 4、 报文转发算法支持
@@ -145,7 +145,7 @@ dpdk 实现了一组大页内存分配、使用和释放的 API，上层应用�
 
 无锁环形队列
 
-dpdk 基于 Linux 内核的无锁环形缓冲 kfifo 实现了自己的一套无锁机制。支持单生产者入列/单消费者出列和多生产者入列/多消费者出列操作，在数据传输的时候，降低性能的同时还能保证数据的同步
+dpdk 基于 Linux 内核的无锁环形缓冲 kfifo 实现了自己的一套无锁机制。支持单生产者入列/单消费者出列和多生产者入列/多消费者出列操作，在数据传输的时候，降低性能的同时还能保证数据的同步.
 
 ==============================================================================
 
@@ -165,20 +165,53 @@ CPU 亲和性
 
 dpdk 利用 CPU 的亲和性将一个线程或多个线程绑定到一个或多个 CPU 上，这样在线程执行过程中，就不会被随意调度，一方面减少了线程间的频繁切换带来的开销，另一方面避免了 CPU 缓存的局部失效性，增加了 CPU 缓存的命中率。
 
+==============================================================================
 
+用面向对象的思想来理解无锁队列ring。
+dpdk的无锁队列ring是借鉴了linux内核kfifo无锁队列。
+ring的实质是FIFO的环形队列。
 
+ring的特点：
+无锁出入队（除了cas(compare and swap)操作）
+多消费/生产者同时出入队
 
+1）无锁队列主要是通过CAS、FAA这些原子操作，和Retry-Loop实现。
+2）对于Retry-Loop，我个人感觉其实和锁什么什么两样。只是这种“锁”的粒度变小了，主要是“锁”HEAD和TAIL这两个关键资源。而不是整个数据结构。
 
+==============================================================================
 
+struct kfifo {   
+    unsigned char *buffer;    /* the buffer holding the data */   
+    unsigned int size;    /* the size of the allocated buffer */   
+    unsigned int in;    /* data is added at offset (in % size) */   
+    unsigned int out;    /* data is extracted from off. (out % size) */   
+    spinlock_t *lock;    /* protects concurrent modifications */   
+};
 
+kfifo主要提供了两个操作，__kfifo_put(入队操作)和__kfifo_get(出队操作)
+buffer， 用于存放数据的缓存
+size,      buffer空间的大小，在初化时，将它向上扩展成2的幂
+lock,      如果使用不能保证任何时间最多只有一个读线程和写线程，需要使用该lock实施同步。
+in, out,  和buffer一起构成一个循环队列。 in指向buffer中队头，而且out指向buffer中的队尾，它的结构如示图如下：
++--------------------------------------------------------------+
+|           |<----------data---------->|                       | 
++--------------------------------------------------------------+ 
+            ^                                       ^  
+            |                                       | 
+            in                                     out
 
+kfifo_alloc 分配kfifo内存和初始化工作
+if (size & (size - 1)) {   
+    BUG_ON(size > 0x80000000);   
+    size = roundup_pow_of_two(size);   
+}   
+buffer = kmalloc(size, gfp_mask);
 
+kfifo->size的值总是在调用者传进来的size参数的基础上向2的幂扩展，这是内核一贯的做法。这样的好处不言而喻--对kfifo->size取模运算可以转化为与运算，如下：
+kfifo->in % kfifo->size 可以转化为 kfifo->in & (kfifo->size – 1)
 
+在kfifo_alloc函数中，使用size & (size – 1)来判断size 是否为2幂，如果条件为真，则表示size不是2的幂，然后调用roundup_pow_of_two将之向上扩展为2的幂。
 
-
-
-
-
-
-
+__kfifo_put是入队操作，它先将数据放入buffer里面，最后才修改in参数；
+__kfifo_get是出队操作，它先将数据从buffer中移走，最后才修改out.
 
