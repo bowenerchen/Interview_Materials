@@ -529,7 +529,16 @@ setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,(char*)&flag,sizeof(flag));
 
 2.中断上下文是由于硬件发生中断时会触发中断信号请求，请求系统处理中断，执行中断服务子程序。
 
+==============================================================================
 
+线程安全性
+mutex
+条件变量
+死锁
+race condition
+false sharing
+多线程debug调试
+生产者消费者模型
 
 
 
