@@ -1,0 +1,181 @@
+单链表相关：
+
+找出单链表的倒数第K个元素（仅允许遍历一遍链表）
+使用指针追赶的方法。定义两个指针fast和slow，fast先走K步，然后fast和slow同时继续走。当fast到链表尾部时，slow指向倒数第K个。注意要考虑链表长度应该大于K。
+
+找出单链表的中间元素（仅允许遍历一遍链表）
+使用指针追赶的方法。fast每次走俩步，slow每次走一步。当fast到链表尾部时，slow指向链表的中间元素。
+
+判断单链表是否有环？
+方法一：使用指针追赶的方法。slow指针每次走一步，fast指针每次走两步。如存在环，则两者相遇；如不存在环，fast遇到NULL退出。
+
+如何知道环的长度？
+记录下碰撞点（或者找在环中任意一结点都可以），让slow从碰撞点开始，绕着环走一圈，再次到碰撞点的位置时，所走过的结点数就是环的长度s。
+
+如何找到环的入口？
+分别从碰撞点、头指针开始走，相遇的那个点就是连接点。
+
+判断两个链表（无环）是否相交？
+分别遍历两条链表，得到其长度；然后用指针在长的链表上先走直到长链表剩余的长度和短链表相同，然后同时遍历两条链表，如果他们有相同的指针，则说明相交
+
+如何知道两个单链表（可能有环）是否相交
+思路：根据两个链表是否有环来分别处理，若相交这个环属于两个链表共有
+（1）如果两个链表都没有环。
+（2）一个有环，一个没环。肯定不相交
+（3）两个都有环。
+     ①求出A的环入口，判断其是否在B链表上，如果在，则相交。
+     ② 在A链表上，使用指针追赶的方法，找到两个指针碰撞点，之后判断碰撞点是否在B链表上。如果在，则相交。
+
+链表的冒泡排序
+先有两个指针，一个头指针，一个尾指针，尾指针一开始指向NULL，即链表的末尾，
+第一次从头进行冒泡到尾，第二次从头冒泡到最后一个节点的前一个节点，就这样一次进行下去，一直到冒泡到第一个节点和第二个节点。
+void BubbleSort(pLinkList pList)
+{
+
+    pLinkNode cur = NULL;
+    pLinkNode tail = NULL;
+    assert(pList);
+    cur = pList->pHead;
+    if ((pList->pHead == NULL)||(pList->pHead->next==NULL))
+    {
+        return;
+    }
+    while (cur != tail)     //当尾指针不等于头指针时进行冒泡
+    {
+        while (cur->next != tail)   //控制cur指针最后到的位置是倒数第二个节点
+        {
+
+            if (cur->data > cur->next->data)
+            {
+                datatype tmp = cur->data;
+                cur->data = cur->next->data;
+                cur->next->data = tmp;
+            }
+            cur = cur->next;
+        }
+        tail = cur;
+        cur = pList->pHead;
+    }
+}
+
+
+链表的快速排序
+初始选取头结点作为flag值，pslow指向头结点，pfast指向第二个节点
+保证pslow节点以及pslow节点左边的节点都<=flag值，pslow右边的节点都>flag
+pfast向右边遍历，直到遇到比flag小的节点，则pslow=pslow->next，然后交换pslow与pfast节点的值，pfast继续向右遍历直到遍历完整个链表
+然后将头结点的值与pslow所指向的节点的值交换，然后递归：
+从头结点到pslow节点
+从pslow->next到NULL
+
+#define NODE struct ListNode
+#define SWAP(a,b,type) {type c=a;a=b;b=c;}
+static void quicksort(NODE* phead,NODE* pend){
+             if(!phead || !(phead->next) || (phead==pend)){
+                 return ;
+         }
+         NODE* pfast=phead->next;
+         NODE* pslow=phead;
+         while(pfast!=pend){
+                if(pfast->val<phead->val){
+                                pslow=pslow->next;
+                                 /*if not equal then swap otherwise no necessary*/
+                                 if(pslow->val != pfast->val)
+                                 SWAP(pslow->val,pfast->val,int);
+                 }
+               pfast=pfast->next;
+         }
+         SWAP(pslow->val,phead->val,int);
+         quicksort(phead,pslow);
+         //quicksort(pslow->next,NULL);
+         quicksort(pslow->next,pend);
+}
+quicksort(head,NULL);
+
+删除无头非尾节点
+把删除的节点后的节点的数据放到要删除的节点上，删除了删除的节点后的节点，然后让删除节点指向删除删除的节点后的节点后的节点。 
+void EraseNotTail(pLinkNode pos)
+{
+    pLinkNode del = NULL;
+    assert(pos->next != NULL);      //断言，排除尾节点的情况
+    pos->data = pos->next->data;    //让当前节点后面节点的数据赋给当前节点。
+    del = pos->next;                //删除记录当前节点后的节点
+    pos->next = pos->next->next;    //当前节点的nex指向删除节点的下一个节点。
+    free(del);
+    del = NULL;
+}
+
+翻转链表
+void Reverse(pLinkList plist)
+{
+    pLinkNode tmp = NULL;       //记录中间节点
+    pLinkNode cur = NULL;       //记录链表的第一个节点
+    pLinkNode newnode = NULL;   //记录翻转后的第一个节点
+    assert(plist);
+    cur = plist->pHead;
+    while (cur != NULL)
+    {
+        tmp = cur;                    
+        cur = cur->next;
+        tmp->next = newnode;
+        newnode = tmp;
+    }
+    plist->pHead = newnode;
+}
+
+在当前节点前插入一个数据x
+把插入节点的数据放到新节点上，把新节点的数据放到插入节点的数据上。 
+这样我们就可以实现在当前节点前插入一个节点了。
+void InsertFrontNode(pLinkNode pos, datatype x)
+{
+
+    pLinkNode newnode = NULL;
+    assert(pos);
+    newnode = (pLinkNode)malloc(sizeof(LinkNode));
+    if (NULL == newnode)
+    {
+        printf("out of memory");
+        exit(EXIT_FAILURE);
+    }
+    newnode->data = pos->data;
+    pos->data = x;
+    newnode->next = pos->next;
+    pos->next = newnode;
+
+}
+
+删除单链表的倒数第K个节点（K>1&&K<总长度）
+首先找到第K个节点，然后按照删除无头非尾的方式来删除这个节点
+
+从尾到头打印链表，使用递归  
+void RPrintList(ListNode * pHead)  
+{  
+    if(pHead == NULL)  
+    {  
+        return;  
+    }  else  {  
+        RPrintList(pHead->m_pNext);  
+        printf("%d\t", pHead->m_nKey);  
+    }  
+}
+
+以倒数第K个元素作为中心旋转链表
+先找到倒数第K个元素，然后将两条链表分为两段，然后将链表合并成旋转后的新链表
+
+将链表位置m和位置n之间的元素翻转
+static NODE* do_reverse(NODE* pm,NODE* pn){
+    NODE* current=pm;
+    NODE* nx=NULL;
+    NODE* pre=current;
+    while(current != pn){
+        nx=current->next;
+        if(pre==current){
+            current->next=pn->next;
+        }else{
+            current->next=pre;
+        }
+        pre=current;
+        current=nx;
+    }
+    current->next=pre;
+return pn;
+}
