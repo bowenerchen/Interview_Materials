@@ -21,7 +21,7 @@ NODE* gen_node(int val) {
 NODE* insert_node(NODE* p_node) {
     if(head == NULL) {
         head = p_node;
-        return;
+        return NULL;
     }
     
     NODE* tmp = head;
@@ -50,7 +50,7 @@ void delete_node(int val) {
     }
 
     if(tmp->next == NULL) {
-        printf("value %d not exists\n");
+        printf("value %d not exists\n", val);
         return;
     }
 
@@ -61,6 +61,9 @@ void delete_node(int val) {
     return;
 }
 
+/*
+ * 三个指针翻转链表
+ * */
 void reverse_link(NODE** phead) {
     
     NODE* head = *phead;
