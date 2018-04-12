@@ -282,5 +282,342 @@ void FindCommon(int* a, int* b, int n)
 因为对于任意一个数k，有k ^ k = 0，k ^ 0 = k，所以将a中所有元素进行异或，那么个数为偶数的元素异或后都变成了0，只留下了个数为奇数的那个元素。
 
 ====================================================================
+求数组的最大值和最小值
+1.快速排序后再获取值
+2.分治法
+void MaxandMin(int *a, int l, int r, int& maxValue, int& minValue)
+{
+    if(l == r) // l与r之间只有一个元素
+    {
+        maxValue = a[l] ;
+        minValue = a[l] ;
+        return ;
+    }
+
+    if(l + 1 == r) // l与r之间只有两个元素
+    {
+        if(a[l] >= a[r])
+        {
+            maxValue = a[l] ;
+            minValue = a[r] ;
+        }
+        else
+        {
+            maxValue = a[r] ;
+            minValue = a[l] ;
+        }
+        return ;
+    }
+
+    int m = (l + r) / 2 ; // 求中点
+
+    int lmax ; // 左半部份最大值
+    int lmin ; // 左半部份最小值
+    MaxandMin(a, l, m, lmax, lmin) ; // 递归计算左半部份
+
+    int rmax ; // 右半部份最大值
+    int rmin ; // 右半部份最小值
+    MaxandMin(a, m + 1, r, rmax, rmin) ; // 递归计算右半部份
+
+    maxValue = max(lmax, rmax) ; // 总的最大值
+    minValue = min(lmin, rmin) ; // 总的最小值
+}
 ====================================================================
+求数组中满足给定和的数对
+给定两个含有n个元素的有序整型数组a和b，各有n个元素，求两个数组中满足给定和的数对，即对a中元素i和b中元素j，满足i + j = d(d已知)。
+两个指针i和j分别指向数组的首尾，然后从两端同时向中间遍历，直到两个指针交叉。
+void FixedSum(int* a, int* b, int n, int d)
+{
+    for (int i = 0, j = n - 1; i < n && j >= 0)
+    {
+        if (a[i] + b[j] < d)
+            ++i ;
+        else if (a[i] + b[j] == d)
+        {
+            ++i ;
+            --j ;
+        } else // a[i] + b[j] > d
+            --j ;
+    }
+}
+====================================================================
+数组循环移位 
+假如原数组： 1 2 3 4 5 6 7 需要右移4次，那么我们想要的结果是： 5 6 7 1 2 3 4。 
+1.将1234逆置 变成 4321 
+2.将567逆置 变成 765 
+3.将两个逆置数组拼接： 4321765 
+4.将这个已拼接的数组逆置： 5671234 就成了我们想要的结果了。
+
+void Reverse(int *arr,int start,int end){      //逆置
+    for(; start < end;start++,end--){
+           int s = arr[end];
+           arr[end] = arr[start];
+           arr[start] = s;
+      }
+}
+
+void RightShift(int* arr,int N, int K){
+      K = K%N;                       //对应上文步骤
+      Reverse(arr,0,K-1);           //1 
+      Reverse(arr,K,N-1);           //2
+      Reverse(arr,0,N-1);           //4
+}
+
+数组右移K位：
+k=k%n;
+array_reverse(a, 0, n-1);
+array_reverse(a, 0, k-1);
+array_reverse(a, k, n-1);
+
+数组左移K位：
+k=k%n;
+array_reverse(a, 0, k-1);
+array_reverse(a, k, n-1);
+array_reverse(a, 0, n-1);
+====================================================================
+计算数字中有多少个二进制的1
+int count_1(int n) {
+    int count = 0x00;
+    while(n) {
+        count++;
+        n=(n-1)&n;
+    }
+    return n;
+}
+
+if(n&(n-1)) printf("数字%d不是2的幂\n", n);
+====================================================================
+
+定义栈的数据结构，要求添加一个min函数，能够得到栈的最小元素。要求函数min、push以及pop的时间复杂度都是O(1)。
+    while(cin>>n) {
+
+        if(!minStack.empty() && minStack.top() <= n) {
+            dataStack.push(n);
+            minStack.push(minStack.top());
+        } else {
+            dataStack.push(n);
+            minStack.push(n);
+        }
+        
+        printf("当前栈的最小元素为：%d\n",minStack.top());
+    }
+
+
+====================================================================
+ 一个台阶总共有n级，如果一次可以跳1级，也可以跳2级。求总共有 多少总跳法
+首先我们考虑最简单的情况：如果只有1 级台阶，那显然只有一种跳法，如果有2 级台阶，那就有两种跳的方法了：一种是分两次跳，每次跳1 级；另外一种就是一次跳2 级。
+现在我们再来讨论一般情况：我们把n 级台阶时的跳法看成是n 的函数，记为f(n)。当n>2 时，第一次跳的时候就有两种不同的选择：一是第一次只跳1 级，此时跳法数目等于后面剩下的n-1 级台阶的跳法数目，即为f(n-1)；另外一种选择是第一次跳2 级，此时跳法数目等于后面剩下的n-2 级台阶的跳法数目，即为f(n-2)。
+因此n 级台阶时的不同跳法的总数f(n) = f(n-1) + f(n-2)。
+我们把上面的分析用一个公式总结如下：
+f(n) =  1  (n=1)
+f(n) =  2  (n=2)
+f(n) =f(n-1) + (f-2)  (n>2)
+分析到这里，相信很多人都能看出这就是我们熟悉的Fibonacci 序列。(O(n))
+int JumpStep(int n)    
+{    
+    if (n <= 0)  return 0;    
+    if (n == 1 || n == 2) return n;    
+    
+    return (JumpStep(n-1) + JumpStep(n-2));    
+}    
+====================================================================
+atoi函数的实现
+本题需要注意的有几个方面：
+（1）检查输入参数，指针是否为NULL；
+（2）去除字符串前面的空格
+（3）处理正负符号
+（4）数值部分计算要注意：第一个是处理溢出；第二个是处理字符串中出现非数字符号的情况
+（5）整体的错误处理选择：如果函数正确执行，应该返回转换后的数字，所以，就不能使用return某个数字来表示某个错误，而应该定义一个全局的错误变量errno，并在出现不同错误的时候设置该变量。
+
+由于单独处理正负号，所以数值计算的值number不应出现负值，当出现负值的时候说明发生了溢出，这时再根据前面的正负号判断是正溢出还是负溢出，如果是正溢出，则将该值赋为最大正数，在C++中是：std::numeric_limits<int>::max();如果是负溢出，则将该值赋值为最小负数即可。
+
+//定义几个错误状态枚举  
+enum Status{kValid = 0,kNULL,kOVERFLOW,kCHAR};  
+int status = kValid;  
+  
+int strToInt(const char* str)  
+{  
+    /* 空指针检查 */  
+    if (str == NULL)  
+    {  
+        status = kNULL;  
+        return 0;  
+    }  
+  
+    /* 处理字符串前面的几个空格 */  
+    while(isspace(*str))  
+        str++;  
+  
+    /* 正负号处理 */  
+    int flag = 1;  
+    if (*str == '-')  
+    {  
+        flag = -1;  
+        str++;  
+    }  
+    else if (*str == '+')  
+        str++;  
+  
+    /* 数值操作 */  
+    int number = 0;  
+    while(*str != '\0')  
+    {  
+        if (*str >= '0' && *str <= '9')  
+        {  
+            number = number * 10 + *str - '0';  
+            /* 处理overflow，int类型的范围为[-2147483648,2147483647]*/  
+            if (number < 0)  
+            {  
+                if(flag == 1)  
+                    number = std::numeric_limits<int>::max();  
+                else if (flag == -1)  
+                    number = std::numeric_limits<int>::min();  
+                status = kOVERFLOW;  
+                return number;  
+            }  
+            str++;  
+        }  
+        else  
+        {  
+            /* 处理字符串中的非数字字符,策略是返回无效字符串状态 */  
+            status = kCHAR;  
+            break;  
+        }  
+    }  
+    return number * flag;  
+}
+
+====================================================================
+
+将一整数逆序后放入数组中，使用递归实现
+void convert(int *result, int n) {
+     if(n>=10)
+         convert(result+1, n/10);
+     *result = n%10;
+}
+
+====================================================================
+递归实现回判断
+int find(char *str, int n) {
+     if(n<=1) return 1;
+     else if(str[0]==str[n-1])   return find(str+1, n-2);
+     else     return 0;
+}
+
+====================================================================
+
+分解质因数
+void prim(int m, int n) {
+     if(m>n) {
+         while(m%n != 0) n++;
+         m /= n;
+         prim(m, n);
+         printf("%d*", n);
+     }
+}
+prim(n,2);
+
+====================================================================
+
+strstr
+const char* my_strstr(const char* sub, const char* dest) {
+    if(sub == NULL) {
+        return dest;
+    }
+
+    if(dest == NULL) {
+        return NULL;
+    }
+
+    const char* psub = sub;
+    const char* pdest = dest;
+    const char* start = dest;
+    while(*pdest) {
+        if(*psub == *pdest) {
+            start = pdest;
+            while(*pdest && *psub && (*psub == *pdest)) {
+                printf("*psub=%c *pdest=%c\n", *psub, *pdest);
+                psub++;
+                pdest++;
+            }
+            if(*psub == '\0') {
+                return start;
+            } else {
+                return NULL;
+            }
+        }
+        pdest++;
+    }
+return NULL;
+}
+
+
+====================================================================
+
+已知strcpy函数的原型是
+       char *strcpy(char *strDest, const char *strSrc);
+       其中strDest是目的字符串，strSrc是源字符串。
+（1）不调用C++/C的字符串库函数，请编写函数 strcpy
+一定注意最后结束时一定要加一个\0结尾
+char *strcpy(char *strDes, const char *string)  
+{  
+    if (string == NULL&&strDes == NULL)  
+        return NULL;  
+    char* address = strDes;  
+    while (*string != '\0')  
+        *(strDes++) = *(string++);  
+    *strDes = '\0';//一定注意最后结束时一定要加一个\0结尾；  
+    return address;//返回保存的strDes首地址;  
+}
+
+（2）strcpy能把strSrc的内容复制到strDest，为什么还要char * 类型的返回值？
+答：为了实现链式表达式。
+例如 int length = strlen( strcpy( strDest, “hello world”) );
+====================================================================
+memcpy
+如果地址有重叠，就要从后向前拷贝
+否则可以从前向后拷贝
+void *Memcpy(void *dst, const void *src, size_t size)  
+{  
+    if (dst == NULL || src == NULL)  
+        return NULL;  
+      
+    char *psrc;  
+    char *pdst;  
+  
+    //地址重叠的情况  
+    if ((src < dst) && (char*)src + size > (char *)dst)  
+    {  
+        psrc = (char*)src + size - 1;  
+        pdst = (char*)dst + size - 1;  
+        while(size--) //从后向前拷贝
+        {  
+            *pdst-- = *pdst--;  
+        }  
+    }else {  
+        psrc = (char*)src;  
+        pdst = (char*)dst;  
+        while(size--)  
+        {  
+            *pdst++ = *psrc++;  
+        }  
+    }  
+    return dst;  
+  
+} 
+====================================================================
+realloc(void *__ptr, size_t __size)：更改已经配置的内存空间，即更改由malloc()函数分配的内存空间的大小。
+如果将分配的内存减少，realloc仅仅是改变索引的信息。
+如果是将分配的内存扩大，则有以下情况：
+1）如果当前内存段后面有需要的内存空间，则直接扩展这段内存空间，realloc()将返回原指针。
+2）如果当前内存段后面的空闲字节不够，那么就使用堆中的第一个能够满足这一要求的内存块，将目前的数据复制到新的位置，并将原来的数据块释放掉，返回新的内存块位置。
+3）如果申请失败，将返回NULL，此时，原来的指针仍然有效。
+
+注意：如果调用成功，不管当前内存段后面的空闲空间是否满足要求，都会释放掉原来的指针，重新返回一个指针，虽然返回的指针有可能和原来的指针一样，即不能再次释放掉原来的指针。
+====================================================================
+
+====================================================================
+
+====================================================================
+
 ====================================================================
