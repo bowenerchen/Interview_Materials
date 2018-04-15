@@ -105,25 +105,29 @@ void EraseNotTail(pLinkNode pos)
 }
 
 翻转链表
-void Reverse(pLinkList plist)
-{
-    pLinkNode tmp = NULL;       //记录中间节点
-    pLinkNode cur = NULL;       //记录链表的第一个节点
-    pLinkNode newnode = NULL;   //记录翻转后的第一个节点
-    assert(plist);
-    cur = plist->pHead;
-    while (cur != NULL)
-    {
-        tmp = cur;                    
-        cur = cur->next;
-        tmp->next = newnode;
-        newnode = tmp;
-    }
-    plist->pHead = newnode;
+#define NODE struct ListNode
+struct ListNode* reverseList(struct ListNode* head) {
+            if(!(head)|| !(head->next)){
+            //printf("empty link\n");
+            return head;
+        }else{
+            NODE* current=(head);/*point to node 1*/
+            NODE* ppre=current;/*point to node 1*/
+            NODE* pnext=current->next;/*point to node 2*/
+            current->next=NULL;/*node 1 next points to NULL*/
+            while(pnext){/*if node 2 exists*/
+                current=pnext;/*point to node 2*/
+                pnext=current->next;/*get node 3*/
+                current->next=ppre;/*node 2 point  to node 1*/
+                ppre=current;/*get node 2*/
+            }
+            (head)=current;/*make head point to the last node*/
+        }
+return head;
 }
 
 在当前节点前插入一个数据x
-把插入节点的数据放到新节点上，把新节点的数据放到插入节点的数据上。 
+把当前节点的数据放到新节点上，把要插入的数据放到当前节点上。 
 这样我们就可以实现在当前节点前插入一个节点了。
 void InsertFrontNode(pLinkNode pos, datatype x)
 {
@@ -367,11 +371,11 @@ void RightShift(int* arr,int N, int K){
 k=k%n;
 array_reverse(a, 0, n-1);
 array_reverse(a, 0, k-1);
-array_reverse(a, k, n-1);
+array_reverse(a, k, n-1);//整个数组的最后翻转放在最后
 
 数组左移K位：
 k=k%n;
-array_reverse(a, 0, k-1);
+array_reverse(a, 0, k-1);//整个数组的最后翻转放在最前
 array_reverse(a, k, n-1);
 array_reverse(a, 0, n-1);
 ====================================================================
