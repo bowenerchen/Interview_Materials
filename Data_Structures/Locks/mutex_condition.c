@@ -28,9 +28,11 @@ void* thread_1(void* arg) {
     }
 
     g_flag = 1;
+    printf("thread1 set g_flag = 1\n");
 
     pthread_mutex_unlock(&mutex);
 
+    printf("thread1 waitting for thread2\n");
     pthread_join(*(pthread_t*)arg, NULL);
 
     printf("leave thread1\n");
@@ -39,18 +41,21 @@ void* thread_1(void* arg) {
 
 void* thread_2(void* arg) {
 
-    printf("this is thread2");
+    printf("this is thread2\n");
 
     pthread_mutex_lock(&mutex);
     if(g_flag == 1) {
         pthread_cond_signal(&cond);
     }
 
-    g_flag = 1;
+    g_flag = 2;
+    printf("thread2 set g_flag = 2\n");
 
     pthread_mutex_unlock(&mutex);
 
-    pthread_join(*(pthread_t*)arg, NULL);
+    //sleep(3);
+    //printf("waitting for thread1\n");
+    //pthread_join(*(pthread_t*)arg, NULL);
 
     printf("leave thread2\n");
     return NULL;
@@ -73,6 +78,7 @@ int main() {
     }
 
     pthread_cond_wait(&cond, &mutex);
+    printf("main thread g_flag changed\n");
 
     pthread_cond_destroy(&cond);
 
