@@ -108,7 +108,7 @@ void del_node(NODE** cur, int val) {
         NODE* del = NULL;
         if(tmp->left == NULL && tmp->right == NULL) { // 被删除的点是叶子节点
             
-            //printf("del leaf node\n"); 
+            //printf("del leaf node\n");
             del = tmp;
             *cur = NULL;//将其父节点的这个指针置为NULL
             free(del);//删除这个叶子节点
