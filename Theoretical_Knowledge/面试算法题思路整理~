@@ -107,7 +107,7 @@ void EraseNotTail(pLinkNode pos)
 翻转链表
 #define NODE struct ListNode
 struct ListNode* reverseList(struct ListNode* head) {
-        if(!(head)|| !(head->next)){
+            if(!(head)|| !(head->next)){
             //printf("empty link\n");
             return head;
         }else{
