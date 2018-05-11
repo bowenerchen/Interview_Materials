@@ -263,12 +263,12 @@ int main()
         strcpy(data.text, buffer);  
         //向队列发送数据  
         if(msgsnd(msgid, (void*)&data, MAX_TEXT, 0) == -1)  
-        {  
+        {
             fprintf(stderr, "msgsnd failed\n");  
             exit(EXIT_FAILURE);  
-        }  
+        }
         //输入end结束输入  
-        if(strncmp(buffer, "end", 3) == 0)  
+        if(strncmp(buffer, "end", 3) == 0)
             running = 0;  
         sleep(1);  
     }  
