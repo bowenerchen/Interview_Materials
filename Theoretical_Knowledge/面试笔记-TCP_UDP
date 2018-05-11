@@ -774,6 +774,13 @@ Accept queue 队列长度由 /proc/sys/net/core/somaxconn 和使用listen函数�
 查看Accept queue 溢出 netstat -s | grep TCPBacklogDrop
 TCPBacklogDrop: 2334
 
+backlog值指定了监听队列的长度，以下内核参数限制了backlog可设定的最大值：
+linux # sysctl -a | grep somaxconn
+net.core.somaxconn = 128
+
+当连接数超过队列长度backlog时，超出的连接也保持为半连接状态，直到数量达到内核参数tcp_max_syn_backlog值，超出该值的连接请求将被丢弃：
+linux # sysctl -a | grep tcp_max_syn
+net.ipv4.tcp_max_syn_backlog = 1024
 ==============================================================================
 
 TCP3次握手实际上可分为4步
