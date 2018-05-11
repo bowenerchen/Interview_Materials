@@ -360,13 +360,28 @@ epoll与select的区别：
 3.使用mmap加速内核与用户空间的消息传递。无论是select,poll还是epoll都需要内核把FD消息通知给用户空间，如何避免不必要的内存拷贝就很重要，在这点上，epoll是通过内核于用户空间mmap同一块内存实现的
 
 ==============================================================================
-epoll既然是对select和poll的改进，就应该能避免上述的三个缺点。那epoll都是怎么解决的呢？在此之前，我们先看一下epoll和select和poll的调用接口上的不同，select和poll都只提供了一个函数——select或者poll函数。而epoll提供了三个函数，epoll_create,epoll_ctl和epoll_wait，epoll_create是创建一个epoll句柄；epoll_ctl是注册要监听的事件类型；epoll_wait则是等待事件的产生。
+epoll既然是对select和poll的改进，就应该能避免上述的三个缺点。那epoll都是怎么解决的呢？
+在此之前，我们先看一下epoll和select和poll的调用接口上的不同，
+select和poll都只提供了一个函数——select或者poll函数。
+而epoll提供了三个函数，epoll_create,epoll_ctl和epoll_wait，
+epoll_create是创建一个epoll句柄；
+epoll_ctl是注册要监听的事件类型；
+epoll_wait则是等待事件的产生。
 
-　　对于第一个缺点，epoll的解决方案在epoll_ctl函数中。每次注册新的事件到epoll句柄中时（在epoll_ctl中指定EPOLL_CTL_ADD），会把所有的fd拷贝进内核，而不是在epoll_wait的时候重复拷贝。epoll保证了每个fd在整个过程中只会拷贝一次。
+对于第一个缺点，epoll的解决方案在epoll_ctl函数中。
+每次注册新的事件到epoll句柄中时（在epoll_ctl中指定EPOLL_CTL_ADD），会把所有的fd拷贝进内核，
+而不是在epoll_wait的时候重复拷贝。
+epoll保证了每个fd在整个过程中只会拷贝一次。
 
-　　对于第二个缺点，epoll的解决方案不像select或poll一样每次都把current轮流加入fd对应的设备等待队列中，而只在epoll_ctl时把current挂一遍（这一遍必不可少）并为每个fd指定一个回调函数，当设备就绪，唤醒等待队列上的等待者时，就会调用这个回调函数，而这个回调函数会把就绪的fd加入一个就绪链表）。epoll_wait的工作实际上就是在这个就绪链表中查看有没有就绪的fd（利用schedule_timeout()实现睡一会，判断一会的效果，和select实现中的第7步是类似的）。
+对于第二个缺点，epoll的解决方案不像select或poll一样每次都把current轮流加入fd对应的设备等待队列中，
+而只在epoll_ctl时把current挂一遍（这一遍必不可少）并为每个fd指定一个回调函数，
+当设备就绪，唤醒等待队列上的等待者时，就会调用这个回调函数，而这个回调函数会把就绪的fd加入一个就绪链表）。
+epoll_wait的工作实际上就是在这个就绪链表中查看有没有就绪的fd（利用schedule_timeout()实现睡一会，判断一会的效果，
+和select实现中的第7步是类似的）。
 
-　　对于第三个缺点，epoll没有这个限制，它所支持的FD上限是最大可以打开文件的数目，这个数字一般远大于2048,举个例子,在1GB内存的机器上大约是10万左右，具体数目可以cat /proc/sys/fs/file-max察看,一般来说这个数目和系统内存关系很大。
+对于第三个缺点，epoll没有这个限制，它所支持的FD上限是最大可以打开文件的数目，
+这个数字一般远大于2048,举个例子,在1GB内存的机器上大约是10万左右，
+具体数目可以cat /proc/sys/fs/file-max查看,一般来说这个数目和系统内存关系很大。
 
 ==============================================================================
 
@@ -578,7 +593,7 @@ net.core.wmem_default = 262144
 net.core.rmem_max = 16777216  
 net.core.wmem_max = 16777216
 
-net.ipv4.tcp_moderate_rcvbuf = 1  
+net.ipv4.tcp_moderate_rcvbuf = 1
 net.ipv4.tcp_adv_win_scale = 2
 
 应用程序编程时可以设置setsockopt()、SO_SNDBUF、SO_RCVBUF
@@ -587,9 +602,13 @@ net.ipv4.tcp_adv_win_scale = 2
 
 先从应用程序编程时可以设置的SO_SNDBUF、SO_RCVBUF说起
 
-无论何种语言，都对TCP连接提供基于setsockopt方法实现的SO_SNDBUF、SO_RCVBUF，怎么理解这两个属性的意义呢？SO_SNDBUF、SO_RCVBUF都是个体化的设置，即，只会影响到设置过的连接，而不会对其他连接生效。SO_SNDBUF表示这个连接上的内核写缓存上限。实际上，进程设置的SO_SNDBUF也并不是真的上限，在内核中会把这个值翻一倍再作为写缓存上限使用，我们不需要纠结这种细节，只需要知道，当设置了SO_SNDBUF时，就相当于划定了所操作的TCP连接上的写缓存能够使用的最大内存。然而，这个值也不是可以由着进程随意设置的，它会受制于系统级的上下限，当它大于上面的系统配置wmem_max（net.core.wmem_max）时，将会被wmem_max替代（同样翻一倍）；而当它特别小时，例如在2.6.18内核中设计的写缓存最小值为2K字节，此时也会被直接替代为2K。
+无论何种语言，都对TCP连接提供基于setsockopt方法实现的SO_SNDBUF、SO_RCVBUF，怎么理解这两个属性的意义呢？
+SO_SNDBUF、SO_RCVBUF都是个体化的设置，即，只会影响到设置过的连接，而不会对其他连接生效。
+SO_SNDBUF表示这个连接上的内核写缓存上限。
+实际上，进程设置的SO_SNDBUF也并不是真的上限，在内核中会把这个值翻一倍再作为写缓存上限使用，我们不需要纠结这种细节，只需要知道，当设置了SO_SNDBUF时，就相当于划定了所操作的TCP连接上的写缓存能够使用的最大内存。然而，这个值也不是可以由着进程随意设置的，它会受制于系统级的上下限，当它大于上面的系统配置wmem_max（net.core.wmem_max）时，将会被wmem_max替代（同样翻一倍）；而当它特别小时，例如在2.6.18内核中设计的写缓存最小值为2K字节，此时也会被直接替代为2K。
 
-SO_RCVBUF表示连接上的读缓存上限，与SO_SNDBUF类似，它也受制于rmem_max配置项，实际在内核中也是2倍大小作为读缓存的使用上限。SO_RCVBUF设置时也有下限，同样在2.6.18内核中若这个值小于256字节就会被256所替代。
+SO_RCVBUF表示连接上的读缓存上限，与SO_SNDBUF类似，它也受制于rmem_max配置项，实际在内核中也是2倍大小作为读缓存的使用上限。
+SO_RCVBUF设置时也有下限，同样在2.6.18内核中若这个值小于256字节就会被256所替代。
 
 ==============================================================================
 
