@@ -298,6 +298,146 @@ epoll只有epoll_create,epoll_ctl,epoll_wait 3个系统调用。
 
 ==============================================================================
 
+水平触发LT
+1. 对于读操作
+只要缓冲内容不为空，LT模式返回读就绪。
+
+2. 对于写操作
+只要缓冲区还不满，LT模式会返回写就绪。
+
+边缘触发ET
+1. 对于读操作
+（1）当缓冲区由不可读变为可读的时候，即缓冲区由空变为不空的时候。
+
+（2）当有新数据到达时，即缓冲区中的待读数据变多的时候。
+
+（3）当缓冲区有数据可读，且应用进程对相应的描述符进行EPOLL_CTL_MOD 修改EPOLLIN事件时。
+
+2. 对于写操作
+（1）当缓冲区由不可写变为可写时。
+
+（2）当有旧数据被发送走，即缓冲区中的内容变少的时候。
+
+（3）当缓冲区有空间可写，且应用进程对相应的描述符进行EPOLL_CTL_MOD 修改EPOLLOUT事件时。
+==============================================================================
+
+epoll高效，是因为内部用了一个红黑树记录添加的socket，用了一个双向链表接收内核触发的事件。是系统级别的支持的
+每一个epoll对象都有一个独立的eventpoll结构体，用于存放通过epoll_ctl方法向epoll对象中添加进来的事件。
+这些事件都会挂载在红黑树中，如此，重复添加的事件就可以通过红黑树而高效的识别出来(红黑树的插入时间效率是lgn，其中n为树的高度)。
+而所有添加到epoll中的事件都会与设备(网卡)驱动程序建立回调关系，也就是说，当相应的事件发生时会调用这个回调方法。
+这个回调方法在内核中叫ep_poll_callback,它会将发生的事件添加到rdlist双链表中。
+
+在epoll中，对于每一个事件，都会建立一个epitem结构体
+
+1. 不用重复传递。我们调用epoll_wait时就相当于以往调用select/poll，但是这时却不用传递socket句柄给内核，因为内核已经在epoll_ctl中拿到了要监控的句柄列表。
+
+2. 在内核里，一切皆文件。所以，epoll向内核注册了一个文件系统，用于存储上述的被监控socket。当你调用epoll_create时，就会在这个虚拟的epoll文件系统里创建一个file结点。当然这个file不是普通文件，它只服务于epoll。
+epoll在被内核初始化时（操作系统启动），同时会开辟出epoll自己的内核高速cache区，用于安置每一个我们想监控的socket，这些socket会以红黑树的形式保存在内核cache里，以支持快速的查找、插入、删除。这个内核高速cache区，就是建立连续的物理内存页，然后在之上建立slab层，简单的说，就是物理上分配好你想要的size的内存对象，每次使用时都是使用空闲的已分配好的对象。
+
+极其高效的原因：
+这是由于我们在调用epoll_create时，内核除了帮我们在epoll文件系统里建了个file结点，在内核cache里建了个红黑树用于存储以后epoll_ctl传来的socket外，还会再建立一个list链表，用于存储准备就绪的事件，当epoll_wait调用时，仅仅观察这个list链表里有没有数据即可。有数据就返回，没有数据就sleep，等到timeout时间到后即使链表没数据也返回。所以，epoll_wait非常高效。
+
+这个准备就绪list链表是怎么维护的呢？当我们执行epoll_ctl时，除了把socket放到epoll文件系统里file对象对应的红黑树上之外，还会给内核中断处理程序注册一个回调函数，告诉内核，如果这个句柄的中断到了，就把它放到准备就绪list链表里。所以，当一个socket上有数据到了，内核在把网卡上的数据copy到内核中后就来把socket插入到准备就绪链表里了。（注：好好理解这句话！）
+
+从上面这句可以看出，epoll的基础就是回调呀！ 
+
+如此，一颗红黑树，一张准备就绪句柄链表，少量的内核cache，就帮我们解决了大并发下的socket处理问题。执行epoll_create时，创建了红黑树和就绪链表，执行epoll_ctl时，如果增加socket句柄，则检查在红黑树中是否存在，存在立即返回，不存在则添加到树干上，然后向内核注册回调函数，用于当中断事件来临时向准备就绪链表中插入数据。执行epoll_wait时立刻返回准备就绪链表里的数据即可。
+
+ET模式为什么要设置在非阻塞模式下工作
+   因为ET模式下的读写需要一直读或写直到出错（对于读，当读到的实际字节数小于请求字节数时就可以停止），而如果你的文件描述符如果不是非阻塞的，那这个一直读或一直写势必会在最后一次阻塞。这样就不能在阻塞在epoll_wait上了，造成其他文件描述符的任务饿死。
+
+ET模式下的读写问题，我们必须实现：
+a. 对于读，只要buffer中还有数据就一直读；
+b. 对于写，只要buffer还有空间且用户请求写的数据还未写完，就一直写。
+
+==============================================================================
+这个方法的原理我们在之前讨论过：当buffer中有数据可读（即buffer不空）且用户对相应fd进行epoll_mod IN事件时ET模式返回读就绪，当buffer中有可写空间（即buffer不满）且用户对相应fd进行epoll_mod OUT事件时返回写就绪。
+
+    for (;;) {
+
+        nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        if (nfds == -1) {
+            perror("epoll_pwait");
+            exit(EXIT_FAILURE);
+        }
+
+        for (i = 0; i < nfds; ++i) {
+
+            fd = events[i].data.fd;
+
+            if (fd == listenfd) {
+
+                while ((conn_sock = accept(listenfd,(struct sockaddr *) &remote, 
+                                (size_t *)&addrlen)) > 0) {
+
+                    setnonblocking(conn_sock);//下面设置ET模式，所以要设置非阻塞
+                    ev.events = EPOLLIN | EPOLLET;
+                    ev.data.fd = conn_sock;
+                    if (epoll_ctl(epfd, EPOLL_CTL_ADD, conn_sock, &ev) == -1) {//读监听
+                        perror("epoll_ctl: add"); //连接套接字
+                        exit(EXIT_FAILURE);
+                    }
+                }
+                if (conn_sock == -1) {
+                    if (errno != EAGAIN && errno != ECONNABORTED 
+                            && errno != EPROTO && errno != EINTR) 
+                        perror("accept");
+                }
+                continue;
+            }
+
+            if (events[i].events & EPOLLIN) {
+                n = 0;
+                while ((nread = read(fd, buf + n, BUFSIZ-1)) > 0) {//ET下可以读就一直读
+                    n += nread;
+                }
+                if (nread == -1 && errno != EAGAIN) {
+                    perror("read error");
+                }
+                ev.data.fd = fd;
+                ev.events = events[i].events | EPOLLOUT; //MOD OUT 
+                if (epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
+                    perror("epoll_ctl: mod");
+                }
+            }
+            
+            if (events[i].events & EPOLLOUT) {
+              sprintf(buf, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\nHello World", 11);
+                int nwrite, data_size = strlen(buf);
+                n = data_size;
+                while (n > 0) {
+                    nwrite = write(fd, buf + data_size - n, n);//ET下一直将要写数据写完
+                    if (nwrite < n) {
+                        if (nwrite == -1 && errno != EAGAIN) {
+                            perror("write error");
+                        }
+                        break;
+                    }
+                    n -= nwrite;
+                }
+                close(fd);
+            }
+        }
+    }
+
+==============================================================================
+
+一道腾讯后台开发的面试题
+
+使用Linux epoll模型，水平（LT）触发模式，当socket可写时，会不停的触发socket可写的事件，如何处理？
+
+第一种最普遍的方式：
+需要向socket写数据的时候才把socket加入epoll，等待可写事件。接受到可写事件后，调用write或者send发送数据。当所有数据都写完后，把socket移出epoll。
+
+这种方式的缺点是，即使发送很少的数据，也要把socket加入epoll，写完后在移出epoll，有一定操作代价。
+
+一种改进的方式：
+开始不把socket加入epoll，需要向socket写数据的时候，直接调用write或者send发送数据。如果返回EAGAIN，把socket加入epoll，在epoll的驱动下写数据，全部数据发送完毕后，再移出epoll。
+
+这种方式的优点是：数据不多的时候可以避免epoll的事件处理，提高效率。
+
+==============================================================================
+
 单机最大tcp连接数
 
 在tcp应用中，server事先在某个固定端口监听，client主动发起连接，经过三路握手后建立tcp连接。那么对单机，其最大并发tcp连接数是多少？如何标识一个TCP连接
