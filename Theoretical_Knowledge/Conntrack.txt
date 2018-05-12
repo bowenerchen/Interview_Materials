@@ -10,9 +10,11 @@ Linux会为它收到的每个数据包维持一个链接跟踪状态
 (1).进入本地
 PREROUTING --> INPUT --> LOCAL
 ip_conntrack_defrag --> ip_conntrack_in --> ip_conntrack_help --> ip_confirm --> 本地进程
+
 (2).转发
 PREROUTING --> FORWARD --> POSTROUTING
 ip_conntrack_defrag --> ip_conntrack_in --> ip_conntrack_help --> ip_confirm --> 发出
+
 (3).本地发出
 LOCAL --> OUTPUT --> POSTROUTING
 ip_conntrack_defrag --> ip_conntrack_local --> ip_conntrack_help --> ip_confirm --> 发出
@@ -35,6 +37,23 @@ IP_CT_RELEATED + IP_CT_IS_REPLY       Packet是已建链接的相关链接，在
 
 ==============================================================================
 
+数据结构部分总结:
+1.整个hash表用ip_conntrack_hash 指针数组来描述，它包含了ip_conntrack_htable_size个元素，默认是根据内存大小计算出来的；
+2. 整个连接跟踪表的大小使用全局变量ip_conntrack_max描述，与hash表的关系是ip_conntrack_max = 8 * ip_conntrack_htable_size；
+3. hash链表的每一个节点是一个struct ip_conntrack_tuple_hash结构，它有两个成员，一个是list，一个是tuple；
+4.Netfilter将每一个数据包转换成tuple，再根据tuple计算出hash值，这样，就可以使用ip_conntrack_hash[hash_id]找到hash表中链表的入口，并组织链表；
+5. 找到hash表中链表入口后，如果链表中不存在此“tuple”，则是一个新连接，就把tuple插入到链表的合适位置；
+6. 图中两个节点tuple[ORIGINAL]和tuple[REPLY]，虽然是分开的，在两个链表当中，但是如前所述，它们同时又被封装在ip_conntrack结构的tuplehash数组中；
+
+==============================================================================
+链接跟踪处理数据包的大致流程：
+
+链接跟踪入口的hook以较高的优先级注册到netfilter的NF_INET_PREROUTING和NF_INET_OUTPUT链上
+链接跟踪出口的hook以较低的优先级注册到netfilter的NF_INET_LOCAL_IN和NF_INET_POST_ROUTING链上
+
+在链接跟踪的入口处主要有三个函数在工作：ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()。
+在链接跟踪的出口处就两个：ip_conntrack_help()和ip_confirm()。
+
 在链接跟踪内部，收到的每个数据包首先被转换成一个struct ip_conntrack_tuple{}结构，
 也就是说，struct ip_conntrack_tuple{}才是链接跟踪系统所认识的数据包
 skb与struct ip_conntrack_tuple{}之间的转换依赖于具体的协议：
@@ -49,6 +68,9 @@ skb --> tuple --> 查找链接跟踪表 --> 调用协议的packet函数 --> 改�
 如果改类型的数据包已经被跟踪过，则不用上述操作
 然后调用该种协议的连接跟踪模块提供的packet()回调函数
 最后根据状态改变链接跟踪记录的状态
+
+连接跟踪表是记录所有连接记录的散列表，其由全局变量ip_conntrack_hash所指向。
+连接跟踪表实际是一个以散列值排列的双向链表数组，链表中的元素即为连接记录所包含的ip_conntrack_tuple_hash结构。
 
 数据包离开链接跟踪出口时，将链接跟踪记录加入到链接跟踪表中
 skb --> 调用协议的helper函数(可选) --> 丢弃报文或加入链接跟踪表
@@ -160,5 +182,10 @@ ip_confirm()
 
 ==============================================================================
 
+如果属于某条连接的数据包之前已经被执行过NAT了，则其连接跟踪记录会被添加到bysource链表中。
+对于SNAT操作，如果是第一个数据包，其流程和DNAT非常相似，在函数find_best_ips_proto()中完成对临时tuple的源地址的修改。
+然后，以修改后的tuple计算其响应tuple，最终用该响应tuple替换掉连接跟踪记录中原来的响应tuple。
+对skb里端口的修改是在manip_pkt()里完成的。
 
+只有每条连接的第一个数据包才会经过nat表，而属于该连接的后续数据包会按照第一个数据包则会按照第一个报所执行的动作进行处理，不再经过nat表
 

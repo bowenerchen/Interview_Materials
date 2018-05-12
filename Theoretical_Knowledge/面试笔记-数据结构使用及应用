@@ -318,3 +318,192 @@ printf("*(a-1)=%d\n", *(a-1));//打印为999
 动态规划
 背包问题
 LCS
+
+==============================================================================
+linux内核数据结构之kfifo
+Linux内核的kfifo是一个环形队列，可以用来当作环形缓冲区
+
+kfifo的数据结构：
+struct kfifo {
+    unsigned char *buffer;     /* the buffer holding the data */
+    unsigned int size;         /* the size of the allocated buffer */
+    unsigned int in;           /* data is added at offset (in % size) */
+    unsigned int out;          /* data is extracted from off. (out % size) */
+    spinlock_t *lock;          /* protects concurrent modifications */
+};
+
+kfifo提供的方法有：
+//根据给定buffer创建一个kfifo
+struct kfifo *kfifo_init(unsigned char *buffer, unsigned int size,
+                gfp_t gfp_mask, spinlock_t *lock);
+
+//给定size分配buffer和kfifo
+struct kfifo *kfifo_alloc(unsigned int size, gfp_t gfp_mask,
+                 spinlock_t *lock);
+//释放kfifo空间
+void kfifo_free(struct kfifo *fifo)
+
+//向kfifo中添加数据
+unsigned int kfifo_put(struct kfifo *fifo,
+                const unsigned char *buffer, unsigned int len)
+//从kfifo中取数据
+unsigned int kfifo_gut(struct kfifo *fifo,
+                const unsigned char *buffer, unsigned int len)
+
+//获取kfifo中有数据的buffer大小
+unsigned int kfifo_len(struct kfifo *fifo)
+
+在kfifo_init和kfifo_calloc中，kfifo->size的值总是在调用者传进来的size参数的基础上向2的幂扩展，这是内核一贯的做法。
+这样的好处不言而喻--对kfifo->size取模运算可以转化为与运算，如：
+kfifo->in % kfifo->size 可以转化为 kfifo->in & (kfifo->size-1)
+
+kfifo的巧妙之处在于in和out定义为无符号类型，
+在put和get时，in和out都是增加，当达到最大值时，产生溢出，使得从0开始，进行循环使用。
+
+一开始，buffer为空，in和out都在左边界
+当放入数据时，in向右边移动，out仍在左边界
+当取出数据时，out向右边移动，in仍在原位
+当数据全部被取完时，in和out重合，此时缓冲区恢复为空，in和out被重新置位到左边界0
+每次put时，in都会增加，直到in溢出转为0
+每次get时，out都会增加，知道out溢出转为0
+确定in和out在buffer长度中的下标靠in和out对size取余实现
+
+//put的对外接口
+static inline unsigned int kfifo_put(struct kfifo *fifo,
+                const unsigned char *buffer, unsigned int len) {
+
+    unsigned long flags;
+    unsigned int ret;
+    spin_lock_irqsave(fifo->lock, flags);//加锁
+    ret = __kfifo_put(fifo, buffer, len);
+    spin_unlock_irqrestore(fifo->lock, flags);//解锁
+    return ret;
+}
+
+//get的对外接口
+static inline unsigned int kfifo_get(struct kfifo *fifo,
+                     unsigned char *buffer, unsigned int len) {
+
+    unsigned long flags;
+    unsigned int ret;
+    spin_lock_irqsave(fifo->lock, flags); //加锁
+    ret = __kfifo_get(fifo, buffer, len);
+    
+    /*
+        当fifo->in == fifo->out时，buffer为空
+    */
+    if (fifo->in == fifo->out)
+        fifo->in = fifo->out = 0;
+    spin_unlock_irqrestore(fifo->lock, flags); //解锁
+    return ret;
+}
+
+//put的实现
+unsigned int __kfifo_put(struct kfifo *fifo,
+            const unsigned char *buffer, unsigned int len)
+{
+    unsigned int l;
+    
+    /*
+        buffer中空的长度，也就是最多能放下的长度
+        fifo->size - fifo->in + fifo->out
+        ==> fifo->size - (fifo->in - fifo->out)
+        每次put时，in都会增加，直到in溢出转为0
+        每次get时，out都会增加，知道out溢出转为0
+        确定in和out在buffer长度中的下标靠in和out对size取余实现
+        in的值肯定会一直大于out，
+        in-out表示当前实际数据的长度
+    */
+    len = min(len, fifo->size - fifo->in + fifo->out);
+
+    /*
+     * Ensure that we sample the fifo->out index -before- we
+     * start putting bytes into the kfifo.
+     */
+    smp_mb();
+
+    /* 
+       first put the data starting from fifo->in to buffer end 
+       首先获取从in开始到右边界的长度，其中
+       fifo->in & (fifo->size - 1) 表示的意义为 fifo->in % (fifo->size)
+       即in的下标对整个长度size取余
+       就是in此时实际的下标，
+       先将in到右边界的部分填满
+    */
+    l = min(len, fifo->size - (fifo->in & (fifo->size - 1)));
+    /*
+       fifo->buffer + (fifo->in & (fifo->size - 1))表示的是此时in的位置
+    */
+    memcpy(fifo->buffer + (fifo->in & (fifo->size - 1)), buffer, l);
+
+    /* 
+        then put the rest (if any) at the beginning of the buffer 
+        然后将剩下的部分填入左边界到out之间
+    */
+    memcpy(fifo->buffer, buffer + l, len - l);
+
+    /*
+     * Ensure that we add the bytes to the kfifo -before-
+     * we update the fifo->in index.
+     */
+    smp_wmb();
+
+    /*
+        每次累加，in对size取余即可以获取当前in在buffer中的实际的下标位置
+        当in溢出时，会自动转换为0，因此in的值每次只需要累加就可以，不用关心in是否会越界
+    */
+    fifo->in += len;
+    return len;
+}
+
+unsigned int __kfifo_get(struct kfifo *fifo,
+             unsigned char *buffer, unsigned int len)
+{
+    unsigned int l;
+    /*
+        每次put时，in都会增加，直到in溢出转为0
+        每次get时，out都会增加，知道out溢出转为0
+        确定in和out在buffer长度中的下标靠in和out对size取余实现
+        in的值肯定会一直大于out，
+        in-out表示当前实际数据的长度
+    */
+    len = min(len, fifo->in - fifo->out);
+
+    /*
+     * Ensure that we sample the fifo->in index -before- we
+     * start removing bytes from the kfifo.
+     */
+    smp_rmb();
+
+    /* 
+        first get the data from fifo->out until the end of the buffer 
+        首先通过(fifo->out & (fifo->size - 1))获取out在buffer长度中的实际的下标位置
+        然后fifo->size - (fifo->out & (fifo->size - 1))可以获得out到右边界之间一共有多少数据
+    */
+    l = min(len, fifo->size - (fifo->out & (fifo->size - 1)));
+
+    /*
+        先将out到右边界的数据拷贝到目标缓冲区中
+    */
+    memcpy(buffer, fifo->buffer + (fifo->out & (fifo->size - 1)), l);
+
+    /* 
+        then get the rest (if any) from the beginning of the buffer
+        然后将剩下需要拷贝的数据长度拷贝到目标缓冲区 
+    */
+    memcpy(buffer + l, fifo->buffer, len - l);
+
+    /*
+     * Ensure that we remove the bytes from the kfifo -before-
+     * we update the fifo->out index.
+     */
+    smp_mb();
+
+    /*
+        每次累加，通过取余可以获取out在buffer中实际应该处于的下标
+        当out溢出时，会自动转换为0，因此out的值每次只需要累加就可以，不用关心out是否会越界
+    */
+    fifo->out += len;
+    return len;
+}
+
