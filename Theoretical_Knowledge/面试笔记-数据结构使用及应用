@@ -371,6 +371,7 @@ kfifo的巧妙之处在于in和out定义为无符号类型，
 每次put时，in都会增加，直到in溢出转为0
 每次get时，out都会增加，知道out溢出转为0
 确定in和out在buffer长度中的下标靠in和out对size取余实现
+in和out在增加的过程中不需要关心他们是否超过某个边界，因为作为无符号整型，当溢出时会自动回转
 
 //put的对外接口
 static inline unsigned int kfifo_put(struct kfifo *fifo,
