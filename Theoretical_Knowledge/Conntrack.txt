@@ -39,11 +39,11 @@ IP_CT_RELEATED + IP_CT_IS_REPLY       Packet是已建链接的相关链接，在
 
 数据结构部分总结:
 1.整个hash表用ip_conntrack_hash 指针数组来描述，它包含了ip_conntrack_htable_size个元素，默认是根据内存大小计算出来的；
-2. 整个连接跟踪表的大小使用全局变量ip_conntrack_max描述，与hash表的关系是ip_conntrack_max = 8 * ip_conntrack_htable_size；
-3. hash链表的每一个节点是一个struct ip_conntrack_tuple_hash结构，它有两个成员，一个是list，一个是tuple；
+2.整个连接跟踪表的大小使用全局变量ip_conntrack_max描述，与hash表的关系是ip_conntrack_max = 8 * ip_conntrack_htable_size；
+3.hash链表的每一个节点是一个struct ip_conntrack_tuple_hash结构，它有两个成员，一个是list，一个是tuple；
 4.Netfilter将每一个数据包转换成tuple，再根据tuple计算出hash值，这样，就可以使用ip_conntrack_hash[hash_id]找到hash表中链表的入口，并组织链表；
-5. 找到hash表中链表入口后，如果链表中不存在此“tuple”，则是一个新连接，就把tuple插入到链表的合适位置；
-6. 图中两个节点tuple[ORIGINAL]和tuple[REPLY]，虽然是分开的，在两个链表当中，但是如前所述，它们同时又被封装在ip_conntrack结构的tuplehash数组中；
+5.找到hash表中链表入口后，如果链表中不存在此“tuple”，则是一个新连接，就把tuple插入到链表的合适位置；
+6.图中两个节点tuple[ORIGINAL]和tuple[REPLY]，虽然是分开的，在两个链表当中，但是如前所述，它们同时又被封装在ip_conntrack结构的tuplehash数组中；
 
 ==============================================================================
 链接跟踪处理数据包的大致流程：

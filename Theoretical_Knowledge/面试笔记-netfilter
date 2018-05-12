@@ -7,6 +7,11 @@ NF_INET_LOCAL_OUT — OUTPUT链
 NF_INET_POST_ROUTING — POST_ROUTING链
 从PRE_ROUTING链进来之后，需要做路由决策，以判断是需要进INPUT链还是FORWARD链
 
+Netfiler的三个维度分别是：
+协议类型：IPv4 IPv6等
+HOOK点：就是五个HOOK点，PREROUTING，INPUT，FORWARD，OUTPUT，POSTROUTING
+回调函数的优先级：数字越小，优先级越高，如-200的优先级高于-150的优先级
+
 NETFILTER的返回值：
 NF_ACCEPT：数据包可以被递送到网络堆栈的下一个模块
 NF_DROP：数据包直接被丢弃，不再传输
@@ -25,10 +30,25 @@ INPUT链：mangle表 filter表
 OUTPUT链：raw表 mangle表 nat表 filter表
 
 ==============================================================================
+nf_hooks二维数组用于存储不同协议簇在每个hook点上所注册的hook函数链
+
 二维数组nf_hooks[pf][hook]，pf对应协议簇，hook对应hook点(也就是5条链)
 nf_hooks[PF_INET][NF_IP_PREROUTING]表示IPv4协议簇下的PREROUTING链
 
-nf_hooks是一个类型为struct nf_hooks_ops的二维数组：
+struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS]; [net\filter\core.c]
+NFPROTO_NUMPROTO表示勾子关联的协议，可取值：
+enum {  
+    NFPROTO_UNSPEC =  0,  
+    NFPROTO_IPV4   =  2,  
+    NFPROTO_ARP    =  3,  
+    NFPROTO_BRIDGE =  7,  
+    NFPROTO_IPV6   = 10,  
+    NFPROTO_DECNET = 12,  
+    NFPROTO_NUMPROTO,  
+};
+
+
+nf_hooks是一个类型为struct list_head的二维数组：
 struct nf_hook_ops
 {
         struct list_head list;                        //链表成员
@@ -44,17 +64,6 @@ struct nf_hook_ops
 成员list用于链入全局勾子数组nf_hooks中，它一定在第一位，保证&nf_hook_ops->list的值与&nf_hook_ops相同。
 
 struct nf_hook_ops只是存储勾子的数据结构，而真正存储这些勾子供协议栈调用的是nf_hooks，从定义可以看出，它其实就是二维数组的链表。
-struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS]; [net\filter\core.c]
-NFPROTO_NUMPROTO表示勾子关联的协议，可取值：
-enum {  
-    NFPROTO_UNSPEC =  0,  
-    NFPROTO_IPV4   =  2,  
-    NFPROTO_ARP    =  3,  
-    NFPROTO_BRIDGE =  7,  
-    NFPROTO_IPV6   = 10,  
-    NFPROTO_DECNET = 12,  
-    NFPROTO_NUMPROTO,  
-};
 
 ==============================================================================
 注册一个HOOK：
