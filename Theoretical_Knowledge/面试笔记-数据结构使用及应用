@@ -332,6 +332,10 @@ struct kfifo {
     spinlock_t *lock;          /* protects concurrent modifications */
 };
 
+smp_mb()            适用于多处理器的内存屏障。 
+smp_rmb()           适用于多处理器的读内存屏障。 
+smp_wmb()           适用于多处理器的写内存屏障。
+
 kfifo提供的方法有：
 //根据给定buffer创建一个kfifo
 struct kfifo *kfifo_init(unsigned char *buffer, unsigned int size,
