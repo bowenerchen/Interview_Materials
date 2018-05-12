@@ -31,10 +31,7 @@ OUTPUT链：raw表 mangle表 nat表 filter表
 
 ==============================================================================
 nf_hooks二维数组用于存储不同协议簇在每个hook点上所注册的hook函数链
-
-二维数组nf_hooks[pf][hook]，pf对应协议簇，hook对应hook点(也就是5条链)
-nf_hooks[PF_INET][NF_IP_PREROUTING]表示IPv4协议簇下的PREROUTING链
-
+nf_hooks是一个类型为struct list_head的二维数组：
 struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS]; [net\filter\core.c]
 NFPROTO_NUMPROTO表示勾子关联的协议，可取值：
 enum {  
@@ -47,8 +44,9 @@ enum {
     NFPROTO_NUMPROTO,  
 };
 
+二维数组nf_hooks[pf][hook]，pf对应协议簇，hook对应hook点(也就是5条链)
+nf_hooks[PF_INET][NF_IP_PREROUTING]表示IPv4协议簇下的PREROUTING链
 
-nf_hooks是一个类型为struct list_head的二维数组：
 struct nf_hook_ops
 {
         struct list_head list;                        //链表成员
@@ -63,9 +61,18 @@ struct nf_hook_ops
 };
 成员list用于链入全局勾子数组nf_hooks中，它一定在第一位，保证&nf_hook_ops->list的值与&nf_hook_ops相同。
 
-struct nf_hook_ops只是存储勾子的数据结构，而真正存储这些勾子供协议栈调用的是nf_hooks，从定义可以看出，它其实就是二维数组的链表。
+==============================================================================
+
+要增加新的钩子函数到Netfilter中相应的过滤点，我们要做的工作其实很简单：
+
+1 编写自己的钩子函数
+
+2 实例化一个struct nf_hook_ops{}结构，并对其进行适当的填充，第一个参数list并不是用户所关心的，初始化时必须设置成{NULL，NULL}
+
+3 用nf_register_hook()函数将我们刚刚填充的nf_hook_ops结构体注册到相应的HOOK点上，即nf_hooks[prot][hooknum]
 
 ==============================================================================
+
 注册一个HOOK：
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -114,6 +121,57 @@ NFPROTO_IPV4  NF_INET_LOCAL_IN <-->nf_hook_ops<-->nf_hook_ops...
 PRE_ROUTING --> LOCAL_IN
 PRE_ROUTING --> FORWARD --> POST_ROUTING
 LOCAL_OUT   --> POSTROUTING
+
+==============================================================================
+
+   1）、filter表
+
+    该表是整个过滤系统中真正起“过滤”作用的地方。所有对数据包的过滤工作都在这个表里进行，也就是说用户如果需要对某种类型的数据包进行过滤拦截，那么最好在这个表中进行操作。filter表会在NF_IP_LOCAL_IN、NF_IP_FORWARD和NF_IP_LOCAL_OUT三个hook点注册钩子函数，也就是说所有配置到filer表中的规则只可能在这三个过滤点上进行设置。
+
+    2）、nat表
+
+    主要用于DNAT和SNAT和地址伪装等操作。用于修改数据包的源、目的地址。目前版本的内核中nat表监视四个hook点：NF_IP_PRE_ROUTING、NF_IP_LOCAL_IN/OUT、NF_IP_POST_ROUTING。但在真正的实际应用中，我们一般仅需要在nat表的PREROUTING和POSTROUTING点上注册钩子函数。该表有个特性：只有新连接的第一个数据包会经过这个表，随后该连接的所有数据包将按照第一个数据包的处理动作做同样的操作，这种特性是由连接跟踪机制来实现的。
+
+    3）、mangle表
+
+    该表主要用于对数据包的修改，诸如修改数据包的TOS、TTL等字段。同时该表还会对数据包打上一些特殊的标签以便结合TC等工具，实现诸如Qos等功能。该表监视所有的hook点。
+
+==============================================================================
+
+在 Netfilter 中规则是顺序存储的，一条rule规则主要包括三个部分：
+ipt_entry：标准匹配结构，主要包含数据包的源、目的IP，出、入接口和掩码等；
+ipt_entry_match：扩展匹配。一条rule规则可能有零个或多个ipt_entry_match结构；
+ipt_entry_target：一条rule规则有且仅有一个target动作。就是当所有的标准匹配和扩展匹配都符合之后才来执行该target。
+
+==============================================================================
+标准匹配，它只会去检查数据包的IP地址，源目的接口，掩码等通用信息，不会用到ipt_entry_match{}。
+
+对于以模块形式存在的扩展匹配，如iprange模块，ipp2p模块等，它们就得实现自己的ipt_match{}结构。
+也就是说，如果你要开发一个新的match模块，那么就必须去实例化一个ipt_match{}结构体对象，并实现该结构体中相应的成员属性(其实主要都是一些些函数指针成员，你必须实现相应的函数体)，然后将该ipt_match{}对象挂在你的ipt_entry_match{}结构的match属性里。
+扩展match通常以插件或模块的形式存在。
+当我们在用户空间通过iptables命令设置规则时如果用到了-m  ‘name’ 参数时，那么此时‘name就是一个扩展匹配模块。
+例如：
+    iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+==============================================================================
+
+标准target就是那些ACCEPT、DROP、REJECT等等之类的处理方式；
+
+扩展target就是那些诸如DNAT、SNAT等以模块形式存在的target了；
+例如：
+    iptables -t nat -A POSTROUTING -s 192.168.180.0/24 -o eth1 -j SNAT –to-source 119.75.218.76 
+
+对于标准的target，它是不需要ipt_target{}结构的，即ipt_entry_target{}中的target属性为NULL；
+而对于我们自己扩展target是需要我们自己手工去实现ipt_target{}对象，并完成相关回调函数的编写。
+对于ipt_target{}结构体中target回调函数的编写有一点要注意：
+该函数必须向Netfilter框架返回IPT_CONTINUE、或者诸如NF_ACCEPT、NF_DROP之类的值。
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
 
 ==============================================================================
 mangle表：

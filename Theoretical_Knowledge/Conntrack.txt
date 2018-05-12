@@ -21,19 +21,70 @@ ip_conntrack_defrag --> ip_conntrack_local --> ip_conntrack_help --> ip_confirm 
 
 ==============================================================================
 
-在skb中有个nfct指针，类型是struct nf_conntrack{}，定义在linux/include/skbuff.h中，该结构体记录了链接记录被公开应用的计数
-链接跟踪在实际应用中，一般都通过强制转换将nfct转换为指向ip_conntrack{}类型的指针，来获取一个数据包所属链接跟踪的状态信息
-Netfilter框架用ip_conntrack{}来记录一个数据包与其链接状态的关系
+Netfilter框架用ip_conntrack{}来记录一个数据包与其链接状态的关系。
+函数struct ip_conntrack *ip_conntrack_get(skb, ctinfo)
+用于获取数据包的连接状态以及该链接状态的相关信息ctinfo
 
-struct ip_conntrack{}定义在include/linux/netfilter_ipv4/ip_conntrack.h中，这个文件中也提供了一个接口：
-struct ip_conntrack *ip_conntrack_get(skb, ctinfo)用于获取一个skb的nfct指针，
-从而得知该数据包的连接状态以及该链接状态的相关信息ctinfo
+在skb中有个nfct指针，类型是struct nf_conntrack{}，定义在linux/include/skbuff.h中，该结构体记录了链接记录被引用的计数
+链接跟踪在实际应用中，一般都通过强制转换将nfct转换为指向ip_conntrack{}类型的指针，来获取一个数据包所属链接跟踪的状态信息
+
 ctinfo表示了每个数据包的几种链接状态：
 IP_CT_ESTABLISHED    Packet是已建链接的一部分，在其初始方向
 IP_CT_RELEATED       Packet是已建链接的相关链接，在其初始方向
 IP_CT_NEW            Packet试图建立新的链接
 IP_CT_ESTABLISHED + IP_CT_IS_REPLY    Packet是已建链接的一部分，在其响应方向
 IP_CT_RELEATED + IP_CT_IS_REPLY       Packet是已建链接的相关链接，在其响应方向
+
+==============================================================================
+链接跟踪入口的hook以较高的优先级注册到netfilter的NF_INET_PREROUTING和NF_INET_OUTPUT链上
+链接跟踪出口的hook以较低的优先级注册到netfilter的NF_INET_LOCAL_IN和NF_INET_POST_ROUTING链上
+
+在链接跟踪的入口处主要有三个函数在工作：ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()。
+在链接跟踪的出口处就两个：ip_conntrack_help()和ip_confirm()。
+
+在开始链接跟踪处理(ip_conntrack_in)前，数据包必须先被重组(ip_conntrack_defrag)，然后才开始连接跟踪的处理
+
+在链接跟踪内部，收到的每个数据包首先被转换成一个struct ip_conntrack_tuple{}结构，
+也就是说，struct ip_conntrack_tuple{}才是链接跟踪系统所认识的数据包
+
+skb与struct ip_conntrack_tuple{}之间的转换依赖于具体的协议：
+TCP/UDP: 源IP 目的IP 源端口 目的端口 序列号
+ICMP: 源IP 目的IP ICMP类型 ICMP_Code 序列号
+其他...
+
+==============================================================================
+
+链接跟踪入口的hook以较高的优先级注册到netfilter的NF_INET_PREROUTING和NF_INET_OUTPUT链上
+链接跟踪出口的hook以较低的优先级注册到netfilter的NF_INET_LOCAL_IN和NF_INET_POST_ROUTING链上
+
+在链接跟踪的入口处主要有三个函数在工作：ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()。
+在链接跟踪的出口处就两个：ip_conntrack_help()和ip_confirm()。
+
+在开始链接跟踪处理(ip_conntrack_in)前，数据包必须先被重组(ip_conntrack_defrag)，然后才开始连接跟踪的处理
+
+数据包进入链接跟踪入口：
+skb --> tuple --> 查找链接跟踪表 --> 调用协议的packet函数 --> 改变链接记录状态
+
+对于每个到来的skb，链接跟踪都将其转化为ip_conntrack_tuple结构，然后用tuple去查找链接跟踪表
+如果该类型的数据包没有被跟踪过，将为其在链接跟踪的hash表里建立一个链接跟踪记录项
+如果改类型的数据包已经被跟踪过，则不用上述操作
+然后调用该种协议的连接跟踪模块提供的packet()回调函数
+最后根据状态改变链接跟踪记录的状态
+
+==============================================================================
+
+数据包离开连接跟踪出口：
+对于每个即将离开Netfilter框架的数据包，
+如果用于处理该协议类型报文的连接跟踪模块提供了helper函数，那么该数据包首先会被helper函数处理，
+如果该报文已经被跟踪过了，那么其所属连接的状态，决定该包是该被丢弃、或是返回协议栈继续传输，又或者将其加入到连接跟踪表中
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
 
 ==============================================================================
 
@@ -46,38 +97,7 @@ IP_CT_RELEATED + IP_CT_IS_REPLY       Packet是已建链接的相关链接，在
 6.图中两个节点tuple[ORIGINAL]和tuple[REPLY]，虽然是分开的，在两个链表当中，但是如前所述，它们同时又被封装在ip_conntrack结构的tuplehash数组中；
 
 ==============================================================================
-链接跟踪处理数据包的大致流程：
 
-链接跟踪入口的hook以较高的优先级注册到netfilter的NF_INET_PREROUTING和NF_INET_OUTPUT链上
-链接跟踪出口的hook以较低的优先级注册到netfilter的NF_INET_LOCAL_IN和NF_INET_POST_ROUTING链上
-
-在链接跟踪的入口处主要有三个函数在工作：ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()。
-在链接跟踪的出口处就两个：ip_conntrack_help()和ip_confirm()。
-
-在链接跟踪内部，收到的每个数据包首先被转换成一个struct ip_conntrack_tuple{}结构，
-也就是说，struct ip_conntrack_tuple{}才是链接跟踪系统所认识的数据包
-skb与struct ip_conntrack_tuple{}之间的转换依赖于具体的协议：
-TCP/UDP: 源IP 目的IP 源端口 目的端口 序列号
-ICMP: 源IP 目的IP ICMP类型 ICMP_Code 序列号
-其他...
-
-数据包进入链接跟踪入口时，创建链接跟踪记录
-skb --> tuple --> 查找链接跟踪表 --> 调用协议的packet函数 --> 改变链接记录状态
-对于每个到来的skb，链接跟踪都将其转化为tuple结构，然后用tuple去查找链接跟踪表
-如果该类型的数据包没有被跟踪过，将为其在链接跟踪的hash表里建立一个链接跟踪记录项
-如果改类型的数据包已经被跟踪过，则不用上述操作
-然后调用该种协议的连接跟踪模块提供的packet()回调函数
-最后根据状态改变链接跟踪记录的状态
-
-连接跟踪表是记录所有连接记录的散列表，其由全局变量ip_conntrack_hash所指向。
-连接跟踪表实际是一个以散列值排列的双向链表数组，链表中的元素即为连接记录所包含的ip_conntrack_tuple_hash结构。
-
-数据包离开链接跟踪出口时，将链接跟踪记录加入到链接跟踪表中
-skb --> 调用协议的helper函数(可选) --> 丢弃报文或加入链接跟踪表
-对于每个即将离开netfilter的数据包，如果用于处理该协议类型的链接跟踪模块提供了helper函数，
-那么该数据包首先被helper函数处理，
-然后判断如果该数据包已经被链接跟踪过了，
-那么其所属的链接状态决定该数据包是该被丢弃还是返回协议栈中继续传输，或者将其加入链接跟踪表中
 
 ==============================================================================
 
@@ -90,7 +110,15 @@ skb --> 调用协议的helper函数(可选) --> 丢弃报文或加入链接跟�
 struct ip_conntrack_protocol ip_ct_protos[]数组中保存链接跟踪系统当前可以处理的所有协议，
 使用协议号作为数组的唯一下标;
 
+==============================================================================
+
 (2).链接跟踪辅助模块 help
+
+help模块在ftp中的应用举例：
+https://blog.csdn.net/dog250/article/details/5692597
+
+在开始链接跟踪处理(ip_conntrack_in)前，数据包必须先被重组(ip_conntrack_defrag)，然后才开始连接跟踪的处理
+
 help模块可以用比较小的代价完成对链接跟踪功能的拓展，如需要对即将离开netfilter的数据包进行修改
 help模块以比较低的优先级注册在LOCAL_OUT和POST_ROUTING两个hook点上
 使用help模块需要实例化一个struct ip_conntrack_helper{}结构体实例，
@@ -100,6 +128,49 @@ helpers是一个全局的双向链表，里面保存了当前已经注册到链�
 注册在Netfilter框架里LOCAL_OUT和POST_ROUTING两个hook点上ip_conntrack_help()回调函数所做的事情:
 通过依次遍历helpers链表，然后调用每个ip_conntrack_helper{}对象的help()函数
 
+很多协议的控制信息在应用层数据中被包含，这些信息直接影响到了链路的建立，比如ftp协议就是这样，
+ftp分为port模式(主动)和passive模式(被动)，
+
+port模式下，起初client连接server的21端口，然后当需要传输data的时候，client发送一个控制包给server，
+包中包含client端开启的端口和自己的ip地址，server收到之后用自己的20端口去连接client控制包中建议的ip和端口，
+在这种情况下，如果client在nat后面使用私网地址，那么server将无法连接client，
+因此nat网关必须要处理这种情况，处理方式就是修改client发给server的控制包(如果加密将不可能修改，还好ftp是不加密的)；
+
+在pass模式下，client连接server的21端口后，如果要传输data，client还要连接server的另一个随机端口，
+该端口是由server发送的控制包传给client的，如果client或者server端所在的防火墙禁止了任意非熟知端口，那么数据将被防火墙拦截；
+
+不管是port模式还是pass模式，防火墙都要处理“第二个”数据连接通路的放行问题，
+在linux中是通过RELATED状态来放行的，正如前文所述，只需配置一条--state RELATED -j ACCEPT规则即可
+
+每一个ip_conntrack都可以拥有多个helper，用于帮助处理连接相关的信息，
+比如ftp协议穿越防火墙就需要处理nat和副连接(data连接)问题，
+因此就有必要用一个helper模块来处理这一类情况，
+处理ftp nat的helper和处理副连接的helper其实不是一类helper，
+前者是ip_nat_ftp结构体，后者是ip_conntrack_ftp结构体，
+虽然不同，但是它们的处理逻辑和注册逻辑都是一样的
+
+ip_conntrack和ip_nat处理ftp总的过程就是，
+ip_conntrack模块得到了连接的信息，然后根据连接信息可以得到一个helper，
+需要说明，一个连接完全可以没有helper，而且大多数的都没有helper，是否需要helper是根据连接的类型决定的，
+一般触及应用层控制数据的修改时才会使用helper，比如ftp的控制命令是在应用层数据中被传输的，
+连接的类型是可以从数据包以及协议头中得到的，因此ip_conntrack模块需要数据包不能分段，也就是说需要完整的ip数据包。
+
+得到helper之后开始调用其help函数，然后判断当前数据包是否需要help，
+比如判断是否是ftp的特殊命令，该命令可以建立一条新的连接，
+如果是这样的话，那么help函数则“预测”到一条即将建立的连接并将之和当前连接关联，然后ip_conntrack基本就没有什么做的了，
+
+数据包继续在netfilter中流动，进入nat，同样的，nat也如ip_conntrack判断是否需要help，
+如果是则调用helper的help函数，判断是否需要help的依据一般就是是否在ip_conntrack模块中“预测”到了即将建立的连接，
+如果预测到了，那么就调用nat的helper的help函数，
+并且将预测到的连接参数传入，在ip_nat_ftp的help函数中根据预测连接的信息对应用层控制数据进行修改。
+
+
+helper模块一般是对需要在应用层数据中传输控制数据的协议进行帮助的，因为OS实现的协议栈并不包含应用层，
+但是有的时候必须对应用层控制数据进行修改，这时就不得不需要一个额外的帮助模块了，
+注意，一般helper修改的都是控制数据，而不是业务数据，所谓控制数据就是和业务无关的，仅仅影响到连接本身的数据。
+
+
+==============================================================================
 
 (3).期望链接：
 Netfilter的连接跟踪为类似于FTP的应用提供了链接跟踪机制
@@ -108,9 +179,39 @@ FTP协议使用21端口做命令传输通道，主动模式下用20端口做数�
 期望链接的概念为：一条链接和另一条链接是相关联的
 每条期望链接都用一个struct ip_conntrack_expect{}结构体来表示，所有的期望链接存储在由全局变量ip_conntrack_expect_list的双向链表中
 
+==============================================================================
+
 (4).链接跟踪表
-链接跟踪表是一个用于记录所有链接跟踪信息的hash表，是一个以数据包的hash值组成的一个双向循环链表数组，每条链表中的每个节点都是
-struct ip_conntrack_tuple_hash{}的一个实例，链接跟踪表由一个全局的双向链表指针变量ip_conntrack_hash[]来表示;
+链接跟踪表是一个用于记录所有链接跟踪信息的hash表，是一个以数据包的hash值组成的一个双向循环链表数组，
+每条链表中的每个节点都是struct ip_conntrack_tuple_hash{}的一个实例，
+链接跟踪表由一个全局的双向链表指针变量ip_conntrack_hash[]来表示;
+
+ip_conntrack_tuple_hash{}仅仅是对ip_conntrack_tuple{}的封装而已，将其组织成了一个双向链表结构
+struct ip_conntrack_tuple_hash {
+    list
+    tuple
+}
+其中list用来将ip_conntrack_tuple_hash链接成双向链表
+其中的tuple指向的就是ip_conntrack_tuple{}结构体
+
+Netfilter框架用ip_conntrack{}来记录一个数据包与其链接状态的关系。
+在ip_conntrack{}结构体的末尾，有一个名为tuplehash的数组，大小为2，该数组的类型为指向ip_conntrack_tuple_hash{}的指针
+tuplehash[0]表示一条数据流“初始”方向上的连接情况，
+tuplehash[1]表示该数据流“应答”方向的响应情况
+
+一个ip_conntrack{}结构的实例就是一个链接记录项
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
+
+==============================================================================
 
 ==============================================================================
 链接跟踪协议管理相关的数据结构：
@@ -130,7 +231,9 @@ struct ip_conntrack_expect{}结构体实力 存储到全局变量ip_conntrack_ex
 对每个数据包skb，Netfilter使用ip_conntrack{}来记录一个数据包与其链接状态的关系。
 
 在链接跟踪内部，收到的每个数据包首先被转换成一个struct ip_conntrack_tuple{}结构。
+
 ==============================================================================
+
 连接跟踪机制在Netfilter框架里所注册的hook函数一共就五个：
 ip_conntrack_defrag()、ip_conntrack_in()、ip_conntrack_local()、ip_conntrack_help()和ip_confirm()。
 
