@@ -121,10 +121,10 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
     int ret;
 
      /* 
-     这个条件判断不是很明白。为什么可以直接忽略以前的nfct。
-     看了后面的代码后，skb->nfcth会在后面的代码中重新得到，再配合这里的注释大概明白了用意。
-     当skb->nfct为有效值时，即意味着该skb已经经过了conn track，再次落到conn track时。
-     如注释所说，比如发往回环的时候，会有这个情况。
+        这个条件判断不是很明白。为什么可以直接忽略以前的nfct。
+        看了后面的代码后，skb->nfcth会在后面的代码中重新得到，再配合这里的注释大概明白了用意。
+        当skb->nfct为有效值时，即意味着该skb已经经过了conn track，再次落到conn track时。
+        如注释所说，比如发往回环的时候，会有这个情况。
      */
     if (skb->nfct) {
         /* Previously seen (loopback or untracked)? Ignore. */
@@ -138,15 +138,16 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
 
     /* rcu_read_lock()ed by nf_hook_slow */
     /* 
-    根据proto family，来得到l3的conn track的target。
-    这里对于netfilter来说，它将conn track的具体工作下发到具体的L3层的target处理。
-    这样无论是ipv4还是ipv6，netfilter的处理可以保持一致。甚至其可以支持更多的L3协议。
-     对于ipv4来说，l3proto就是nf_conntrack_l3proto_ipv4。
+        根据proto family，来得到l3的conn track的target。
+        这里对于netfilter来说，它将conn track的具体工作下发到具体的L3层的target处理。
+        这样无论是ipv4还是ipv6，netfilter的处理可以保持一致。甚至其可以支持更多的L3协议。
+        对于ipv4来说，l3proto就是nf_conntrack_l3proto_ipv4。
     */
     l3proto = __nf_ct_l3proto_find(pf);
+
     /* 
-    将L3的报文头的偏移即数据包skb传给l3->get_l4proto来得到L4的协议号即L4的起始位置。
-    这时L3的报文头完全由具体的L3层的proto负责解析
+        将L3的报文头的偏移即数据包skb传给l3->get_l4proto来得到L4的协议号即L4的起始位置。
+        这时L3的报文头完全由具体的L3层的proto负责解析
     */
     ret = l3proto->get_l4proto(skb, skb_network_offset(skb),
                  &dataoff, &protonum);
@@ -159,9 +160,9 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
     }
      
      /*
-     与L3类似，同样是通过L4的协议号得到具体的L4 proto的target。
-     实现与具体协议的解耦。
-     如nf_conntrack_l4proto_tcp4， nf_conntrack_l4proto_udp4等等
+        与L3类似，同样是通过L4的协议号得到具体的L4 proto的target。
+        实现与具体协议的解耦。
+        如nf_conntrack_l4proto_tcp4， nf_conntrack_l4proto_udp4等等
      */
     l4proto = __nf_ct_l4proto_find(pf, protonum);
 
@@ -169,6 +170,7 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
      * inverse of the return code tells to the netfilter
      * core what to do with the packet. */
     if (l4proto->error != NULL) {
+
         /* 对L4数据包进行检查，由具体的L4协议负责 */
         ret = l4proto->error(net, tmpl, skb, dataoff, &ctinfo,
                  pf, hooknum);
@@ -180,10 +182,14 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
         }
     }
     
-     /* 根据L3和L4层的信息，得到conn track和其信息。后面会学习resolve_normal_ct */
+     /* 
+        根据L3和L4层的信息，得到conn track和其信息。后面会学习resolve_normal_ct 
+     */
     ct = resolve_normal_ct(net, tmpl, skb, dataoff, pf, protonum,
              l3proto, l4proto, &set_reply, &ctinfo);
+    
     if (!ct) {
+        
         /* Not valid part of a connection */
         NF_CT_STAT_INC_ATOMIC(net, invalid);
         ret = NF_ACCEPT;
@@ -200,9 +206,9 @@ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
     NF_CT_ASSERT(skb->nfct);
      
      /* 
-     将数据包传递给具体的L4 target进行特定的操作。
-     如nf_conntrack_l4proto_udp4，会update连接conn track的age，保证不ageout
-     对于nf_conntrack_l4proto_tcp4，会有更复杂的操作。
+        将数据包传递给具体的L4 target进行特定的操作。
+        如nf_conntrack_l4proto_udp4，会update连接conn track的age，保证不ageout
+        对于nf_conntrack_l4proto_tcp4，会有更复杂的操作。
      */
     ret = l4proto->packet(ct, skb, dataoff, ctinfo, pf, hooknum);
     if (ret <= 0) {
@@ -227,7 +233,9 @@ out:
 
     return ret;
 }
+
 ==============================================================================
+
 /* On success, returns conntrack ptr, sets skb->nfct and ctinfo */
 static inline struct nf_conn *
 resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
@@ -309,15 +317,20 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
         */
         /* Once we've had two way comms, always ESTABLISHED. */
         if (test_bit(IPS_SEEN_REPLY_BIT, &ct->status)) {
+
             /* 之前收到过REPLY，那么ctinfo为established*/
             pr_debug("nf_conntrack_in: normal packet for %p\n", ct);
             *ctinfo = IP_CT_ESTABLISHED;
+
         } else if (test_bit(IPS_EXPECTED_BIT, &ct->status)) {
-            pr_debug("nf_conntrack_in: related packet for %p\n",
-                 ct);
+
+            pr_debug("nf_conntrack_in: related packet for %p\n", ct);
+
             /* 表明这是一个相关的conn track。如ICMP error或者FTP的data session？ */
             *ctinfo = IP_CT_RELATED;
+
         } else {
+
             /* 表明这是一个新的conn track*/
             pr_debug("nf_conntrack_in: new packet for %p\n", ct);
             *ctinfo = IP_CT_NEW;
@@ -328,3 +341,57 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
     skb->nfctinfo = *ctinfo;
     return ct;
 }
+
+==============================================================================
+
+help模块可以用比较小的代价完成对链接跟踪功能的拓展，如需要对即将离开netfilter的数据包进行修改
+help模块以比较低的优先级注册在LOCAL_OUT和POST_ROUTING两个hook点上
+
+使用help模块需要实例化一个struct nf_conntrack_helper{}结构体实例，
+然后使用nf_conntrack_helper_register()函数将其注册到helpers全局变量中，
+
+helpers是一个全局的双向链表，里面保存了当前已经注册到链接跟踪系统中的所有协议的辅助模块；
+全局helpers变量的定义和初始化在net/netfilter/nf_conntrack_helper.c文件中完成的
+注册在Netfilter框架里LOCAL_OUT和POST_ROUTING两个hook点上nf_conntrack_help()回调函数所做的事情:
+通过依次遍历helpers链表，然后调用每个ip_conntrack_helper{}对象的help()函数
+
+很多协议的控制信息在应用层数据中被包含，这些信息直接影响到了链路的建立，比如ftp协议就是这样，
+ftp分为port模式(主动)和passive模式(被动)，
+
+port模式下，起初client连接server的21端口，然后当需要传输data的时候，client发送一个控制包给server，
+包中包含client端开启的端口和自己的ip地址，server收到之后用自己的20端口去连接client控制包中建议的ip和端口，
+在这种情况下，如果client在nat后面使用私网地址，那么server将无法连接client，
+因此nat网关必须要处理这种情况，处理方式就是修改client发给server的控制包(如果加密将不可能修改，还好ftp是不加密的)；
+
+在pass模式下，client连接server的21端口后，如果要传输data，client还要连接server的另一个随机端口，
+该端口是由server发送的控制包传给client的，如果client或者server端所在的防火墙禁止了任意非熟知端口，那么数据将被防火墙拦截；
+
+不管是port模式还是pass模式，防火墙都要处理“第二个”数据连接通路的放行问题，
+在linux中是通过RELATED状态来放行的，正如前文所述，只需配置一条--state RELATED -j ACCEPT规则即可
+
+每一个ip_conntrack都可以拥有多个helper，用于帮助处理连接相关的信息，
+比如ftp协议穿越防火墙就需要处理nat和副连接(data连接)问题，
+因此就有必要用一个helper模块来处理这一类情况，
+处理ftp nat的helper和处理副连接的helper其实不是一类helper，
+前者是ip_nat_ftp结构体，后者是ip_conntrack_ftp结构体，
+虽然不同，但是它们的处理逻辑和注册逻辑都是一样的
+
+ip_conntrack和ip_nat处理ftp总的过程就是，
+ip_conntrack模块得到了连接的信息，然后根据连接信息可以得到一个helper，
+需要说明，一个连接完全可以没有helper，而且大多数的都没有helper，是否需要helper是根据连接的类型决定的，
+一般触及应用层控制数据的修改时才会使用helper，比如ftp的控制命令是在应用层数据中被传输的，
+连接的类型是可以从数据包以及协议头中得到的，因此ip_conntrack模块需要数据包不能分段，也就是说需要完整的ip数据包。
+
+得到helper之后开始调用其help函数，然后判断当前数据包是否需要help，
+比如判断是否是ftp的特殊命令，该命令可以建立一条新的连接，
+如果是这样的话，那么help函数则“预测”到一条即将建立的连接并将之和当前连接关联，然后ip_conntrack基本就没有什么做的了，
+
+数据包继续在netfilter中流动，进入nat，同样的，nat也如ip_conntrack判断是否需要help，
+如果是则调用helper的help函数，判断是否需要help的依据一般就是是否在ip_conntrack模块中“预测”到了即将建立的连接，
+如果预测到了，那么就调用nat的helper的help函数，
+并且将预测到的连接参数传入，在ip_nat_ftp的help函数中根据预测连接的信息对应用层控制数据进行修改。
+
+
+helper模块一般是对需要在应用层数据中传输控制数据的协议进行帮助的，因为OS实现的协议栈并不包含应用层，
+但是有的时候必须对应用层控制数据进行修改，这时就不得不需要一个额外的帮助模块了，
+注意，一般helper修改的都是控制数据，而不是业务数据，所谓控制数据就是和业务无关的，仅仅影响到连接本身的数据。
