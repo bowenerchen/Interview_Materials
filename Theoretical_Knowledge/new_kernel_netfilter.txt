@@ -253,7 +253,11 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
     struct nf_conn *ct;
     u16 zone = tmpl ? nf_ct_zone(tmpl) : NF_CT_DEFAULT_ZONE;
 
-     /* 通过具体的L3和L4 target得到tuple */
+     /* 
+        通过具体的L3和L4 target得到tuple
+        TCP/UDP: 源IP 目的IP 源端口 目的端口 序列号
+        ICMP: 源IP 目的IP ICMP类型 ICMP_Code 序列号
+     */
     if (!nf_ct_get_tuple(skb, skb_network_offset(skb),
              dataoff, l3num, protonum, &tuple, l3proto,
              l4proto)) {
@@ -264,6 +268,14 @@ resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
     /* look for tuple match */
     /* 通过tuple找到正确的conn track
        返回值为struct nf_conntrack_tuple_hash *
+       对源的比较：
+            (nf_inet_addr_cmp(&t1->src.u3, &t2->src.u3) &&
+                    t1->src.u.all == t2->src.u.all &&
+                    t1->src.l3num == t2->src.l3num)
+       对目的地址的比较：
+            (nf_inet_addr_cmp(&t1->dst.u3, &t2->dst.u3) &&
+                    t1->dst.u.all == t2->dst.u.all &&
+                    t1->dst.protonum == t2->dst.protonum);
     */
     h = nf_conntrack_find_get(net, zone, &tuple);
     if (!h) {
@@ -395,3 +407,33 @@ ip_conntrack模块得到了连接的信息，然后根据连接信息可以得�
 helper模块一般是对需要在应用层数据中传输控制数据的协议进行帮助的，因为OS实现的协议栈并不包含应用层，
 但是有的时候必须对应用层控制数据进行修改，这时就不得不需要一个额外的帮助模块了，
 注意，一般helper修改的都是控制数据，而不是业务数据，所谓控制数据就是和业务无关的，仅仅影响到连接本身的数据。
+
+==============================================================================
+链接跟踪查找函数跟踪：
+nf_conntrack_find_get
+    __nf_conntrack_find_get
+        ____nf_conntrack_find
+            nf_ct_key_equal
+                nf_ct_tuple_equal
+                    __nf_ct_tuple_src_equal __nf_ct_tuple_dst_equal
+
+所有的链接跟踪存储在&net->ct.hash桶中
+hlist_nulls_for_each_entry_rcu(h, n, &net->ct.hash[bucket], hnnode) 
+
+123 static inline bool __nf_ct_tuple_src_equal(const struct nf_conntrack_tuple *t1,
+124                        const struct nf_conntrack_tuple *t2)
+125 {
+126     return (nf_inet_addr_cmp(&t1->src.u3, &t2->src.u3) &&
+127         t1->src.u.all == t2->src.u.all &&
+128         t1->src.l3num == t2->src.l3num);
+129 }
+130 
+131 static inline bool __nf_ct_tuple_dst_equal(const struct nf_conntrack_tuple *t1,
+132                        const struct nf_conntrack_tuple *t2)
+133 {
+134     return (nf_inet_addr_cmp(&t1->dst.u3, &t2->dst.u3) &&
+135         t1->dst.u.all == t2->dst.u.all &&
+136         t1->dst.protonum == t2->dst.protonum);
+137 }
+
+
