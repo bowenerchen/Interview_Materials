@@ -1,0 +1,330 @@
+//每个链接跟踪记录项就是一个nf_conn的结构体对象
+//每个连接跟踪的结构体对象中，包含了一个数组
+//struct nf_conntrack_tuple_hash tuplehash[IP_CT_DIR_MAX];
+//这个数组包含两个元素，下标为0的元素表示初始方向的链接记录，下标为1的元素表示应答方向的链接记录
+
+ 74 struct nf_conn {
+ 75     /* Usage count in here is 1 for hash table/destruct timer, 1 per skb,
+ 76      * plus 1 for any connection(s) we are `master' for
+ 77      *
+ 78      * Hint, SKB address this struct and refcnt via skb->nfct and
+ 79      * helpers nf_conntrack_get() and nf_conntrack_put().
+ 80      * Helper nf_ct_put() equals nf_conntrack_put() by dec refcnt,
+ 81      * beware nf_ct_get() is different and don't inc refcnt.
+ 82      */
+ 83     struct nf_conntrack ct_general;
+ 84 
+ 85     spinlock_t  lock;
+ 86     u16     cpu;
+ 87 
+ 88     /* XXX should I move this to the tail ? - Y.K */
+ 89     /* These are my tuples; original and reply */
+ 90     struct nf_conntrack_tuple_hash tuplehash[IP_CT_DIR_MAX];
+ 91 
+ 92     /* Have we seen traffic both ways yet? (bitset) */
+ 93     unsigned long status;
+ 94 
+ 95     /* If we were expected by an expectation, this will be it */
+ 96     struct nf_conn *master;
+ 97 
+ 98     /* Timer function; drops refcnt when it goes off. */
+ 99     struct timer_list timeout;
+100 
+101 #if defined(CONFIG_NF_CONNTRACK_MARK)
+102     u_int32_t mark;
+103 #endif
+104 
+105 #ifdef CONFIG_NF_CONNTRACK_SECMARK
+106     u_int32_t secmark;
+107 #endif
+108 
+109     /* Extensions */
+110     struct nf_ct_ext *ext;
+111 #ifdef CONFIG_NET_NS
+112     struct net *ct_net;
+113 #endif
+114 
+115     /* Storage reserved for other modules, must be the last member */
+116     union nf_conntrack_proto proto;
+117 };
+
+==============================================================================
+
+//struct nf_conntrack_tuple_hash是对struct nf_conntrack_tuple的封装
+//其中hnnode用来将nf_conntrack_tuple_hash节点链接成双向链表
+
+117 /* Connections have two entries in the hash table: one for each way */
+118 struct nf_conntrack_tuple_hash {
+119     struct hlist_nulls_node hnnode;
+120     struct nf_conntrack_tuple tuple;
+121 };
+
+==============================================================================
+//nf_conntrack_tuple是链接跟踪中真正记录链接信息的部分
+//nf_conntrack_tuple_hash是对nf_conntrack_tuple的封装
+
+ 35 /* This contains the information to distinguish a connection. */
+ 36 struct nf_conntrack_tuple {
+ 37     struct nf_conntrack_man src;
+ 38 
+ 39     /* These are the parts of the tuple which are fixed. */
+ 40     struct {
+ 41         union nf_inet_addr u3;
+ 42         union {
+ 43             /* Add other protocols here. */
+ 44             __be16 all;
+ 45 
+ 46             struct {
+ 47                 __be16 port;
+ 48             } tcp;
+ 49             struct {
+ 50                 __be16 port;
+ 51             } udp;
+ 52             struct {
+ 53                 u_int8_t type, code;
+ 54             } icmp;
+ 55             struct {
+ 56                 __be16 port;
+ 57             } dccp;
+ 58             struct {
+ 59                 __be16 port;
+ 60             } sctp;
+ 61             struct {
+ 62                 __be16 key;
+ 63             } gre;
+ 64         } u;
+ 65 
+ 66         /* The protocol. */
+ 67         u_int8_t protonum;
+ 68 
+ 69         /* The direction (for tuplehash) */
+ 70         u_int8_t dir;
+ 71     } dst;
+ 72 };
+
+==============================================================================
+
+//数据包进入链接跟踪，开始进行连接跟踪的处理
+//链接跟踪的入口函数为nf_conntrack_in
+//net/netfilter/nf_conntrack_core.c
+unsigned int
+nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
+        struct sk_buff *skb)
+{
+    struct nf_conn *ct, *tmpl = NULL;
+    enum ip_conntrack_info ctinfo;
+    struct nf_conntrack_l3proto *l3proto;
+    struct nf_conntrack_l4proto *l4proto;
+    unsigned int dataoff;
+    u_int8_t protonum;
+    int set_reply = 0;
+    int ret;
+
+     /* 
+     这个条件判断不是很明白。为什么可以直接忽略以前的nfct。
+     看了后面的代码后，skb->nfcth会在后面的代码中重新得到，再配合这里的注释大概明白了用意。
+     当skb->nfct为有效值时，即意味着该skb已经经过了conn track，再次落到conn track时。
+     如注释所说，比如发往回环的时候，会有这个情况。
+     */
+    if (skb->nfct) {
+        /* Previously seen (loopback or untracked)? Ignore. */
+        tmpl = (struct nf_conn *)skb->nfct;
+        if (!nf_ct_is_template(tmpl)) {
+            NF_CT_STAT_INC_ATOMIC(net, ignore);
+            return NF_ACCEPT;
+        }
+        skb->nfct = NULL;
+    }
+
+    /* rcu_read_lock()ed by nf_hook_slow */
+    /* 
+    根据proto family，来得到l3的conn track的target。
+    这里对于netfilter来说，它将conn track的具体工作下发到具体的L3层的target处理。
+    这样无论是ipv4还是ipv6，netfilter的处理可以保持一致。甚至其可以支持更多的L3协议。
+     对于ipv4来说，l3proto就是nf_conntrack_l3proto_ipv4。
+    */
+    l3proto = __nf_ct_l3proto_find(pf);
+    /* 
+    将L3的报文头的偏移即数据包skb传给l3->get_l4proto来得到L4的协议号即L4的起始位置。
+    这时L3的报文头完全由具体的L3层的proto负责解析
+    */
+    ret = l3proto->get_l4proto(skb, skb_network_offset(skb),
+                 &dataoff, &protonum);
+    if (ret <= 0) {
+        pr_debug("not prepared to track yet or error occured\n");
+        NF_CT_STAT_INC_ATOMIC(net, error);
+        NF_CT_STAT_INC_ATOMIC(net, invalid);
+        ret = -ret;
+        goto out;
+    }
+     
+     /*
+     与L3类似，同样是通过L4的协议号得到具体的L4 proto的target。
+     实现与具体协议的解耦。
+     如nf_conntrack_l4proto_tcp4， nf_conntrack_l4proto_udp4等等
+     */
+    l4proto = __nf_ct_l4proto_find(pf, protonum);
+
+    /* It may be an special packet, error, unclean...
+     * inverse of the return code tells to the netfilter
+     * core what to do with the packet. */
+    if (l4proto->error != NULL) {
+        /* 对L4数据包进行检查，由具体的L4协议负责 */
+        ret = l4proto->error(net, tmpl, skb, dataoff, &ctinfo,
+                 pf, hooknum);
+        if (ret <= 0) {
+            NF_CT_STAT_INC_ATOMIC(net, error);
+            NF_CT_STAT_INC_ATOMIC(net, invalid);
+            ret = -ret;
+            goto out;
+        }
+    }
+    
+     /* 根据L3和L4层的信息，得到conn track和其信息。后面会学习resolve_normal_ct */
+    ct = resolve_normal_ct(net, tmpl, skb, dataoff, pf, protonum,
+             l3proto, l4proto, &set_reply, &ctinfo);
+    if (!ct) {
+        /* Not valid part of a connection */
+        NF_CT_STAT_INC_ATOMIC(net, invalid);
+        ret = NF_ACCEPT;
+        goto out;
+    }
+
+    if (IS_ERR(ct)) {
+        /* Too stressed to deal. */
+        NF_CT_STAT_INC_ATOMIC(net, drop);
+        ret = NF_DROP;
+        goto out;
+    }
+
+    NF_CT_ASSERT(skb->nfct);
+     
+     /* 
+     将数据包传递给具体的L4 target进行特定的操作。
+     如nf_conntrack_l4proto_udp4，会update连接conn track的age，保证不ageout
+     对于nf_conntrack_l4proto_tcp4，会有更复杂的操作。
+     */
+    ret = l4proto->packet(ct, skb, dataoff, ctinfo, pf, hooknum);
+    if (ret <= 0) {
+        /* Invalid: inverse of the return code tells
+         * the netfilter core what to do */
+        pr_debug("nf_conntrack_in: Can't track with proto module\n");
+        nf_conntrack_put(skb->nfct);
+        skb->nfct = NULL;
+        NF_CT_STAT_INC_ATOMIC(net, invalid);
+        if (ret == -NF_DROP)
+            NF_CT_STAT_INC_ATOMIC(net, drop);
+        ret = -ret;
+        goto out;
+    }
+     
+     /* 设置conn track的事件，不明白这里为什么叫做cache */
+    if (set_reply && !test_and_set_bit(IPS_SEEN_REPLY_BIT, &ct->status))
+        nf_conntrack_event_cache(IPCT_REPLY, ct);
+out:
+    if (tmpl)
+        nf_ct_put(tmpl);
+
+    return ret;
+}
+==============================================================================
+/* On success, returns conntrack ptr, sets skb->nfct and ctinfo */
+static inline struct nf_conn *
+resolve_normal_ct(struct net *net, struct nf_conn *tmpl,
+         struct sk_buff *skb,
+         unsigned int dataoff,
+         u_int16_t l3num,
+         u_int8_t protonum,
+         struct nf_conntrack_l3proto *l3proto,
+         struct nf_conntrack_l4proto *l4proto,
+         int *set_reply,
+         enum ip_conntrack_info *ctinfo)
+{
+    struct nf_conntrack_tuple tuple;
+    struct nf_conntrack_tuple_hash *h;
+    struct nf_conn *ct;
+    u16 zone = tmpl ? nf_ct_zone(tmpl) : NF_CT_DEFAULT_ZONE;
+
+     /* 通过具体的L3和L4 target得到tuple */
+    if (!nf_ct_get_tuple(skb, skb_network_offset(skb),
+             dataoff, l3num, protonum, &tuple, l3proto,
+             l4proto)) {
+        pr_debug("resolve_normal_ct: Can't get tuple\n");
+        return NULL;
+    }
+
+    /* look for tuple match */
+    /* 通过tuple找到正确的conn track
+       返回值为struct nf_conntrack_tuple_hash *
+    */
+    h = nf_conntrack_find_get(net, zone, &tuple);
+    if (!h) {
+        /* 
+            没有conn track的话，就创建一个新的conn track，并添加到hash表中
+            init_conntrack中的动作包括：
+                创建链接跟踪项nf_conn
+                ct = __nf_conntrack_alloc(net, zone, tuple, &repl_tuple, GFP_ATOMIC, hash);
+                为链接跟踪项建立4层相关的链接记录模块                
+                l4proto->new(ct, skb, dataoff, timeouts)
+                返回链接跟踪当前的节点
+                return &ct->tuplehash[IP_CT_DIR_ORIGINAL];
+                
+        */
+        h = init_conntrack(net, tmpl, &tuple, l3proto, l4proto,
+                 skb, dataoff);
+        if (!h)
+            return NULL;
+        if (IS_ERR(h))
+            return (void *)h;
+    }
+    /* 
+        从hash节点获得conn track 	
+        返回值为struct nf_conn *
+        static inline struct nf_conn *
+        nf_ct_tuplehash_to_ctrack(const struct nf_conntrack_tuple_hash *hash) {
+            return container_of(hash, struct nf_conn,
+                    tuplehash[hash->tuple.dst.dir]);
+        }
+
+        计算的方法其实很简单，就是用该成员变量的指针减去它相对于结构体起始位置的偏移量。
+        #define container_of(ptr, type, member) ({                      \
+          const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+          (type *)( (char *)__mptr - offsetof(type,member) );})
+    */
+    ct = nf_ct_tuplehash_to_ctrack(h);
+
+    /* It exists; we have (non-exclusive) reference. */
+    if (NF_CT_DIRECTION(h) == IP_CT_DIR_REPLY) {
+        /* 
+            tuple为REPLY方向，那么ctinfo为establish+reply 
+        */
+        *ctinfo = IP_CT_ESTABLISHED + IP_CT_IS_REPLY;
+
+        /* Please set reply bit if this packet OK */
+        *set_reply = 1;
+
+    } else {
+        /* 
+            tuple为original方向，即初始的发送方向 
+        */
+        /* Once we've had two way comms, always ESTABLISHED. */
+        if (test_bit(IPS_SEEN_REPLY_BIT, &ct->status)) {
+            /* 之前收到过REPLY，那么ctinfo为established*/
+            pr_debug("nf_conntrack_in: normal packet for %p\n", ct);
+            *ctinfo = IP_CT_ESTABLISHED;
+        } else if (test_bit(IPS_EXPECTED_BIT, &ct->status)) {
+            pr_debug("nf_conntrack_in: related packet for %p\n",
+                 ct);
+            /* 表明这是一个相关的conn track。如ICMP error或者FTP的data session？ */
+            *ctinfo = IP_CT_RELATED;
+        } else {
+            /* 表明这是一个新的conn track*/
+            pr_debug("nf_conntrack_in: new packet for %p\n", ct);
+            *ctinfo = IP_CT_NEW;
+        }
+        *set_reply = 0;
+    }
+    skb->nfct = &ct->ct_general;
+    skb->nfctinfo = *ctinfo;
+    return ct;
+}
