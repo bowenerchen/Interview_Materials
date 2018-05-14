@@ -520,3 +520,37 @@ unsigned int __kfifo_get(struct kfifo *fifo,
     return len;
 }
 
+==============================================================================
+
+基于环形缓冲区的无锁队列
+CAS操作——Compare & Set，或是 Compare & Swap，现在几乎所有的CPU指令都支持CAS的原子操作，X86下对应的是 CMPXCHG 汇编指令。
+有了这个原子操作，我们就可以用其来实现各种无锁（lock free）的数据结构。
+
+与CAS相似的还有下面的原子操作：
+Fetch And Add，一般用来对变量做 +1 的原子操作 __sync_fetch_and_add
+Test-and-set，写值到某个内存位置并传回其旧值。汇编指令BST
+Test and Test-and-set，用来低低Test-and-Set的资源争夺情况
+
+CAS 原语负责将某处内存地址的值（1 个字节）与一个期望值进行比较，如果相等，则将该内存地址处的值替换为新值，CAS 操作伪码描述如下：
+Bool CAS(T* addr, T expected, T newValue) 
+{ 
+     if( *addr == expected ) 
+    { 
+         *addr =  newValue; 
+          return true; 
+    } 
+    else 
+          return false; 
+}
+
+在实际开发过程中，利用 CAS 进行同步，代码如下所示：
+do{
+       备份旧数据；
+       基于旧数据构造新数据；
+} while(!CAS( 内存地址，备份的旧数据，新数据 ))
+当两者进行比较时，如果相等，则证明共享数据没有被修改，替换成新值，然后继续往下运行；
+如果不相等，说明共享数据已经被修改，放弃已经所做的操作，然后重新执行刚才的操作。
+容易看出 CAS 操作是基于共享数据不会被修改的假设，采用了类似于数据库的 commit-retry 的模式。
+当同步冲突出现的机会很少时，这种假设能带来较大的性能提升。
+
+
