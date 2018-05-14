@@ -144,6 +144,8 @@ SKEME 决定了IKE的密钥交换方式，IKE主要使用DH来实现密钥交换
 Oakley决定了IPSec的框架设计，让IPSec能够支持更多的协议
 ISAKMP是IKE的本质协议，它决定了IKE协商包的封装格式，交换过程和模式切换
 
+IKE协商报文采用UDP格式,默认端口是500
+
 为建立IPSec SA而进行的IKE协商工作由ISAKMP报文来完成：
 IP Header | UDP Header | ISAKMP Header | Payload
 ISAKMP报文头：
