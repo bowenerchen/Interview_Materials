@@ -1,7 +1,8 @@
 单链表相关：
 
 找出单链表的倒数第K个元素（仅允许遍历一遍链表）
-使用指针追赶的方法。定义两个指针fast和slow，fast先走K步，然后fast和slow同时继续走。当fast到链表尾部时，slow指向倒数第K个。注意要考虑链表长度应该大于K。
+使用指针追赶的方法。定义两个指针fast和slow，fast先走K步，然后fast和slow同时继续走。当fast到链表尾部时，slow指向倒数第K个。
+注意要考虑链表长度应该大于K。
 
 找出单链表的中间元素（仅允许遍历一遍链表）
 使用指针追赶的方法。fast每次走俩步，slow每次走一步。当fast到链表尾部时，slow指向链表的中间元素。
@@ -576,7 +577,7 @@ return NULL;
 ====================================================================
 
 已知strcpy函数的原型是
-       char *strcpy(char *strDest, const char *strSrc);
+       char *strcpy(nanmachar *strDest, const char *strSrc);
        其中strDest是目的字符串，strSrc是源字符串。
 （1）不调用C++/C的字符串库函数，请编写函数 strcpy
 一定注意最后结束时一定要加一个\0结尾
