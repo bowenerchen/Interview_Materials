@@ -127,6 +127,24 @@ struct ListNode* reverseList(struct ListNode* head) {
 return head;
 }
 
+ListNode* ReverseList(ListNode* pHead) {
+    
+    ListNode* pReversedHead = NULL;
+    ListNode* pNode = pHead;
+    ListNode* pPrev = NULL;
+
+    while(pNode != NULL) {
+        ListNode* pNext = pNode->next;
+        if(pNext == NULL) {
+            pReversedHead = pNode;
+        }
+        pNode->next = pPrev;
+        pPrev = pNode;
+        pNode = pNext;
+    }
+    return pReversedHead;
+}
+
 在当前节点前插入一个数据x
 把当前节点的数据放到新节点上，把要插入的数据放到当前节点上。 
 这样我们就可以实现在当前节点前插入一个节点了。
@@ -394,6 +412,8 @@ array_reverse(a, k, n-1);
 array_reverse(a, 0, n-1);
 ====================================================================
 计算数字中有多少个二进制的1
+把一个整数减去1再和原整数做与运算，会把这个这个整数最右边的1变为0
+那么这个整数中有多少个1，则就可以做多少次这样的运算
 int count_1(int n) {
     int count = 0x00;
     while(n) {
@@ -412,7 +432,7 @@ int count_1(int n) {
 ====================================================================
 
 如果n是2的幂，那么 n & (n-1) == 0
-
+一个整数如果是2的整数次方，那么它的二进制表示中有且仅有一位是1
 if(n&(n-1)) printf("数字%d不是2的幂\n", n);
 
 在kfifo_init和kfifo_calloc中，kfifo->size的值总是在调用者传进来的size参数的基础上向2的幂扩展，这是内核一贯的做法。
