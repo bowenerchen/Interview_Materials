@@ -171,7 +171,7 @@ void InsertFrontNode(pLinkNode pos, datatype x)
 
 从尾到头打印链表，使用递归  
 void RPrintList(ListNode * pHead)  
-{  
+{
     if(pHead == NULL)  
     {  
         return;  
@@ -431,7 +431,7 @@ void FixedSum(int* a, int* b, int n, int d)
     }
 }
 ====================================================================
-数组循环移位 
+数组循环移位
 假如原数组： 1 2 3 4 5 6 7 需要右移4次，那么我们想要的结果是： 5 6 7 1 2 3 4。 
 1.将1234逆置 变成 4321 
 2.将567逆置 变成 765 
@@ -455,18 +455,18 @@ void RightShift(int* arr,int N, int K){
 
 数组右移K位：
 k=k%n;
-array_reverse(a, 0, n-1);
+array_reverse(a, 0, n-1);//整个数组的最后翻转放在最前
 array_reverse(a, 0, k-1);
-array_reverse(a, k, n-1);//整个数组的最后翻转放在最后
+array_reverse(a, k, n-1);
 
 数组左移K位：
 k=k%n;
-array_reverse(a, 0, k-1);//整个数组的最后翻转放在最前
+array_reverse(a, 0, k-1);
 array_reverse(a, k, n-1);
-array_reverse(a, 0, n-1);
+array_reverse(a, 0, n-1);//整个数组的最后翻转放在最后
 ====================================================================
 计算数字中有多少个二进制的1
-把一个整数减去1再和原整数做与运算，会把这个这个整数最右边的1变为0
+把一个整数减去1再和原整数做与运算，会把这个整数最右边的1变为0
 那么这个整数中有多少个1，则就可以做多少次这样的运算
 int count_1(int n) {
     int count = 0x00;
@@ -775,7 +775,7 @@ char *strcpy(char *strDes, const char *string)
     while (*string != '\0')  
         *(strDes++) = *(string++);  
     *strDes = '\0';//一定注意最后结束时一定要加一个\0结尾；  
-    return address;//返回保存的strDes首地址;  
+    return address;//返回保存的strDes首地址;
 }
 
 （2）strcpy能把strSrc的内容复制到strDest，为什么还要char * 类型的返回值？
