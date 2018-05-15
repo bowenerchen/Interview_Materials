@@ -71,17 +71,19 @@ pfast向右边遍历，直到遇到比flag小的节点，则pslow=pslow->next，
 #define NODE struct ListNode
 #define SWAP(a,b,type) {type c=a;a=b;b=c;}
 static void quicksort(NODE* phead,NODE* pend){
-             if(!phead || !(phead->next) || (phead==pend)){
+         if(!phead || !(phead->next) || (phead==pend)){
                  return ;
          }
+         
          NODE* pfast=phead->next;
          NODE* pslow=phead;
+         
          while(pfast!=pend){
                 if(pfast->val<phead->val){
-                                pslow=pslow->next;
-                                 /*if not equal then swap otherwise no necessary*/
-                                 if(pslow->val != pfast->val)
-                                 SWAP(pslow->val,pfast->val,int);
+                        pslow=pslow->next;
+                        /*if not equal then swap otherwise no necessary*/
+                        if(pslow->val != pfast->val)
+                            SWAP(pslow->val,pfast->val,int);
                  }
                pfast=pfast->next;
          }
