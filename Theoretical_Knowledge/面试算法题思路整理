@@ -448,9 +448,9 @@ void Reverse(int *arr,int start,int end){      //逆置
       }
 }
 
-void RightShift(int* arr,int N, int K){
+void RightShift(int* arr,int N, int K) {
       K = K%N;                       //对应上文步骤
-      Reverse(arr,0,K-1);           //1 
+      Reverse(arr,0,K-1);           //1
       Reverse(arr,K,N-1);           //2
       Reverse(arr,0,N-1);           //4
 }
